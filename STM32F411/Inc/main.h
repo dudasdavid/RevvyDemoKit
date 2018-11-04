@@ -59,7 +59,7 @@
 
 /* Private define ------------------------------------------------------------*/
 
-#define BUZZER_PWM_Pin GPIO_PIN_5
+#define BUZZER_PWM_Pin GPIO_PIN_6
 #define BUZZER_PWM_GPIO_Port GPIOE
 #define LEFT2_FW_Pin GPIO_PIN_13
 #define LEFT2_FW_GPIO_Port GPIOC

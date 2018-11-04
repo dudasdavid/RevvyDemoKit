@@ -296,8 +296,8 @@ int main(void)
   HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2);
   HAL_TIMEx_PWMN_Start(&htim5, TIM_CHANNEL_2);
   // 1*PWM signal for buzzer
-  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
-  HAL_TIMEx_PWMN_Start(&htim9, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
+  HAL_TIMEx_PWMN_Start(&htim9, TIM_CHANNEL_2);
   //Start internal timer for 10us time measurement
   HAL_TIM_Base_Start(&htim10);
   
@@ -316,7 +316,7 @@ int main(void)
   TIM5->CCR1 = 5*20000/100; //SERVO5 - L5
   TIM5->CCR2 = 5*20000/100; //SERVO6 - L6
   
-  TIM2->CCR3 = 40*4800/100; //Buzzer
+  TIM9->CCR2 = 40*2400/100; //Buzzer
   
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET); //LEFT1 FW
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, GPIO_PIN_RESET); //LEFT1 RW
@@ -848,7 +848,7 @@ static void MX_TIM9_Init(void)
   htim9.Instance = TIM9;
   htim9.Init.Prescaler = 0;
   htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim9.Init.Period = 4800;
+  htim9.Init.Period = 2400;
   htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   if (HAL_TIM_PWM_Init(&htim9) != HAL_OK)
   {
@@ -859,7 +859,7 @@ static void MX_TIM9_Init(void)
   sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  if (HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
