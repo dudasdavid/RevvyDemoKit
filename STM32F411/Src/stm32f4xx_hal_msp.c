@@ -58,7 +58,7 @@ extern void _Error_Handler(char *, int);
 /* USER CODE END 0 */
                         
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
-                                                                                                    /**
+                                                                                                                        /**
   * Initializes the Global MSP.
   */
 void HAL_MspInit(void)
@@ -407,6 +407,34 @@ void HAL_TIM_PWM_MspInit(TIM_HandleTypeDef* htim_pwm)
 
   /* USER CODE END TIM5_MspInit 1 */
   }
+  else if(htim_pwm->Instance==TIM9)
+  {
+  /* USER CODE BEGIN TIM9_MspInit 0 */
+
+  /* USER CODE END TIM9_MspInit 0 */
+    /* Peripheral clock enable */
+    __HAL_RCC_TIM9_CLK_ENABLE();
+  /* USER CODE BEGIN TIM9_MspInit 1 */
+
+  /* USER CODE END TIM9_MspInit 1 */
+  }
+
+}
+
+void HAL_TIM_Base_MspInit(TIM_HandleTypeDef* htim_base)
+{
+
+  if(htim_base->Instance==TIM10)
+  {
+  /* USER CODE BEGIN TIM10_MspInit 0 */
+
+  /* USER CODE END TIM10_MspInit 0 */
+    /* Peripheral clock enable */
+    __HAL_RCC_TIM10_CLK_ENABLE();
+  /* USER CODE BEGIN TIM10_MspInit 1 */
+
+  /* USER CODE END TIM10_MspInit 1 */
+  }
 
 }
 
@@ -425,7 +453,7 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim)
     PE13     ------> TIM1_CH3
     PE14     ------> TIM1_CH4 
     */
-    GPIO_InitStruct.Pin = LEFT_PWM1_Pin|LEFT_PWM2_Pin|LEFT_PWM3_Pin|RIGHT_PWM1_Pin;
+    GPIO_InitStruct.Pin = LEFT1_PWM_Pin|LEFT2_PWM_Pin|LEFT3_PWM_Pin|RIGHT1_PWM_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -446,19 +474,19 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim)
     PB10     ------> TIM2_CH3
     PA15     ------> TIM2_CH1 
     */
-    GPIO_InitStruct.Pin = RIGHT_PWM3_Pin;
+    GPIO_InitStruct.Pin = RIGHT3_PWM_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-    HAL_GPIO_Init(RIGHT_PWM3_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(RIGHT3_PWM_GPIO_Port, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = RIGHT_PWM2_Pin;
+    GPIO_InitStruct.Pin = RIGHT2_PWM_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-    HAL_GPIO_Init(RIGHT_PWM2_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(RIGHT2_PWM_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN TIM2_MspPostInit 1 */
 
@@ -496,12 +524,12 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim)
     /**TIM4 GPIO Configuration    
     PB7     ------> TIM4_CH2 
     */
-    GPIO_InitStruct.Pin = WS2812_Pin;
+    GPIO_InitStruct.Pin = WS2812_PWM_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
     GPIO_InitStruct.Alternate = GPIO_AF2_TIM4;
-    HAL_GPIO_Init(WS2812_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(WS2812_PWM_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN TIM4_MspPostInit 1 */
 
@@ -527,6 +555,26 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef* htim)
   /* USER CODE BEGIN TIM5_MspPostInit 1 */
 
   /* USER CODE END TIM5_MspPostInit 1 */
+  }
+  else if(htim->Instance==TIM9)
+  {
+  /* USER CODE BEGIN TIM9_MspPostInit 0 */
+
+  /* USER CODE END TIM9_MspPostInit 0 */
+  
+    /**TIM9 GPIO Configuration    
+    PE5     ------> TIM9_CH1 
+    */
+    GPIO_InitStruct.Pin = BUZZER_PWM_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    GPIO_InitStruct.Alternate = GPIO_AF3_TIM9;
+    HAL_GPIO_Init(BUZZER_PWM_GPIO_Port, &GPIO_InitStruct);
+
+  /* USER CODE BEGIN TIM9_MspPostInit 1 */
+
+  /* USER CODE END TIM9_MspPostInit 1 */
   }
 
 }
@@ -595,6 +643,34 @@ void HAL_TIM_PWM_MspDeInit(TIM_HandleTypeDef* htim_pwm)
 
   /* USER CODE END TIM5_MspDeInit 1 */
   }
+  else if(htim_pwm->Instance==TIM9)
+  {
+  /* USER CODE BEGIN TIM9_MspDeInit 0 */
+
+  /* USER CODE END TIM9_MspDeInit 0 */
+    /* Peripheral clock disable */
+    __HAL_RCC_TIM9_CLK_DISABLE();
+  /* USER CODE BEGIN TIM9_MspDeInit 1 */
+
+  /* USER CODE END TIM9_MspDeInit 1 */
+  }
+
+}
+
+void HAL_TIM_Base_MspDeInit(TIM_HandleTypeDef* htim_base)
+{
+
+  if(htim_base->Instance==TIM10)
+  {
+  /* USER CODE BEGIN TIM10_MspDeInit 0 */
+
+  /* USER CODE END TIM10_MspDeInit 0 */
+    /* Peripheral clock disable */
+    __HAL_RCC_TIM10_CLK_DISABLE();
+  /* USER CODE BEGIN TIM10_MspDeInit 1 */
+
+  /* USER CODE END TIM10_MspDeInit 1 */
+  }
 
 }
 
@@ -614,7 +690,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
     PC6     ------> USART6_TX
     PC7     ------> USART6_RX 
     */
-    GPIO_InitStruct.Pin = GPIO_PIN_6|GPIO_PIN_7;
+    GPIO_InitStruct.Pin = HM_10_Pin|HM_10C7_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_PULLUP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
@@ -646,7 +722,7 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* huart)
     PC6     ------> USART6_TX
     PC7     ------> USART6_RX 
     */
-    HAL_GPIO_DeInit(GPIOC, GPIO_PIN_6|GPIO_PIN_7);
+    HAL_GPIO_DeInit(GPIOC, HM_10_Pin|HM_10C7_Pin);
 
     /* USART6 interrupt DeInit */
     HAL_NVIC_DisableIRQ(USART6_IRQn);

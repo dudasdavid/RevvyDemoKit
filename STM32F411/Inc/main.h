@@ -59,6 +59,8 @@
 
 /* Private define ------------------------------------------------------------*/
 
+#define BUZZER_PWM_Pin GPIO_PIN_5
+#define BUZZER_PWM_GPIO_Port GPIOE
 #define LEFT2_FW_Pin GPIO_PIN_13
 #define LEFT2_FW_GPIO_Port GPIOC
 #define LEFT2_RW_Pin GPIO_PIN_14
@@ -103,16 +105,16 @@
 #define RIGHT1_ENC_B_GPIO_Port GPIOE
 #define RIGHT2_ENC_B_Pin GPIO_PIN_8
 #define RIGHT2_ENC_B_GPIO_Port GPIOE
-#define LEFT_PWM1_Pin GPIO_PIN_9
-#define LEFT_PWM1_GPIO_Port GPIOE
-#define LEFT_PWM2_Pin GPIO_PIN_11
-#define LEFT_PWM2_GPIO_Port GPIOE
-#define LEFT_PWM3_Pin GPIO_PIN_13
-#define LEFT_PWM3_GPIO_Port GPIOE
-#define RIGHT_PWM1_Pin GPIO_PIN_14
-#define RIGHT_PWM1_GPIO_Port GPIOE
-#define RIGHT_PWM3_Pin GPIO_PIN_10
-#define RIGHT_PWM3_GPIO_Port GPIOB
+#define LEFT1_PWM_Pin GPIO_PIN_9
+#define LEFT1_PWM_GPIO_Port GPIOE
+#define LEFT2_PWM_Pin GPIO_PIN_11
+#define LEFT2_PWM_GPIO_Port GPIOE
+#define LEFT3_PWM_Pin GPIO_PIN_13
+#define LEFT3_PWM_GPIO_Port GPIOE
+#define RIGHT1_PWM_Pin GPIO_PIN_14
+#define RIGHT1_PWM_GPIO_Port GPIOE
+#define RIGHT3_PWM_Pin GPIO_PIN_10
+#define RIGHT3_PWM_GPIO_Port GPIOB
 #define LEFT1_ENC_B_Pin GPIO_PIN_12
 #define LEFT1_ENC_B_GPIO_Port GPIOB
 #define LEFT2_ENC_B_Pin GPIO_PIN_13
@@ -139,6 +141,10 @@
 #define LD5_GPIO_Port GPIOD
 #define LD6_Pin GPIO_PIN_15
 #define LD6_GPIO_Port GPIOD
+#define HM_10_Pin GPIO_PIN_6
+#define HM_10_GPIO_Port GPIOC
+#define HM_10C7_Pin GPIO_PIN_7
+#define HM_10C7_GPIO_Port GPIOC
 #define SENSOR_SDA_Pin GPIO_PIN_9
 #define SENSOR_SDA_GPIO_Port GPIOC
 #define SENSOR_SCL_Pin GPIO_PIN_8
@@ -151,8 +157,8 @@
 #define SWDIO_GPIO_Port GPIOA
 #define SWCLK_Pin GPIO_PIN_14
 #define SWCLK_GPIO_Port GPIOA
-#define RIGHT_PWM2_Pin GPIO_PIN_15
-#define RIGHT_PWM2_GPIO_Port GPIOA
+#define RIGHT2_PWM_Pin GPIO_PIN_15
+#define RIGHT2_PWM_GPIO_Port GPIOA
 #define LEFT3_FW_Pin GPIO_PIN_10
 #define LEFT3_FW_GPIO_Port GPIOC
 #define LEFT3_RW_Pin GPIO_PIN_11
@@ -189,8 +195,8 @@
 #define SERVO2_GPIO_Port GPIOB
 #define Audio_SCL_Pin GPIO_PIN_6
 #define Audio_SCL_GPIO_Port GPIOB
-#define WS2812_Pin GPIO_PIN_7
-#define WS2812_GPIO_Port GPIOB
+#define WS2812_PWM_Pin GPIO_PIN_7
+#define WS2812_PWM_GPIO_Port GPIOB
 
 /* ########################## Assert Selection ############################## */
 /**

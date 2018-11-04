@@ -56,7 +56,6 @@
 #include "WS2812_Lib.h"
 #include "stm32f411e_discovery.h"
 #include "stm32f411e_discovery_accelerometer.h"
-#include "stm32f411e_discovery_gyroscope.h"
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -73,6 +72,8 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim5;
+TIM_HandleTypeDef htim9;
+TIM_HandleTypeDef htim10;
 DMA_HandleTypeDef hdma_tim4_ch2;
 
 UART_HandleTypeDef huart6;
@@ -101,13 +102,12 @@ osThreadId ledTaskHandle;
 static volatile uint32_t ADC_Buf[6];
 static volatile uint32_t ADC_Values[6];
 
-static uint32_t mot1Cntr = 0; //L1
-static uint32_t mot2Cntr = 0; //L2
-static uint32_t mot3Cntr = 0; //L3
-static uint32_t mot4Cntr = 0; //R1
-static uint32_t mot5Cntr = 0; //R2
-static uint32_t mot6Cntr = 0; //R3
-
+static uint16_t mot1Cntr, mot1CntrPrev = 0; //L1
+static uint16_t mot2Cntr, mot2CntrPrev = 0; //L2
+static uint16_t mot3Cntr, mot3CntrPrev = 0; //L3
+static uint16_t mot4Cntr, mot4CntrPrev = 0; //R1
+static uint16_t mot5Cntr, mot5CntrPrev = 0; //R2
+static uint16_t mot6Cntr, mot6CntrPrev = 0; //R3
 static volatile uint8_t mot1Dir = 0; //L1
 static volatile uint8_t mot2Dir = 0; //L2
 static volatile uint8_t mot3Dir = 0; //L3
@@ -115,10 +115,54 @@ static volatile uint8_t mot4Dir = 0; //R1
 static volatile uint8_t mot5Dir = 0; //R2
 static volatile uint8_t mot6Dir = 0; //R3
 
-static uint32_t sen1Cntr = 0; //Sensors
-static uint32_t sen2Cntr = 0; //Sensors
-static uint32_t sen3Cntr = 0; //Sensors
-static uint32_t sen4Cntr = 0; //Sensors
+static volatile uint32_t sen1Cntr, sen1Start, sen1End, sen1Length = 0; //Sensors
+static volatile uint32_t sen2Cntr, sen2Start, sen2End, sen2Length = 0; //Sensors
+static volatile uint32_t sen3Cntr, sen3Start, sen3End, sen3Length = 0; //Sensors
+static volatile uint32_t sen4Cntr, sen4Start, sen4End, sen4Length = 0; //Sensors
+static volatile float sen1Distance = 0;
+static volatile float sen2Distance = 0;
+static volatile float sen3Distance = 0;
+static volatile float sen4Distance = 0;
+
+static volatile float batteryVoltage1 = 0;
+static volatile float batteryVoltage2 = 0;
+
+static volatile uint16_t sen1AnalogValue = 0;
+static volatile uint16_t sen2AnalogValue = 0;
+static volatile uint16_t sen3AnalogValue = 0;
+static volatile uint16_t sen4AnalogValue = 0;
+
+static volatile uint32_t internalCounter = 0;
+
+static volatile float roll,pitch,heading = 0;
+static volatile float fNormAcc,fSinRoll,fCosRoll,fSinPitch,fCosPitch = 0.0f;
+static volatile float accX,accY,accZ = 0;
+static volatile float accXFiltered,accYFiltered,accZFiltered = 0;
+static volatile float compassX,compassY,compassZ = 0;
+
+static volatile float wheelL1Odometer_m, wheelL1Odometer_m_prev = 0;
+static volatile float wheelL2Odometer_m, wheelL2Odometer_m_prev = 0;
+static volatile float wheelL3Odometer_m, wheelL3Odometer_m_prev = 0;
+static volatile float wheelR1Odometer_m, wheelR1Odometer_m_prev = 0;
+static volatile float wheelR2Odometer_m, wheelR2Odometer_m_prev = 0;
+static volatile float wheelR3Odometer_m, wheelR3Odometer_m_prev = 0;
+static volatile float wheelL1Angle_deg = 0;
+static volatile float wheelL2Angle_deg = 0;
+static volatile float wheelL3Angle_deg = 0;
+static volatile float wheelR1Angle_deg = 0;
+static volatile float wheelR2Angle_deg = 0;
+static volatile float wheelR3Angle_deg = 0;
+
+static volatile float wheelL1RawVelocity_mps, wheelL1FiltVelocity_mps = 0;
+static volatile float wheelL2RawVelocity_mps, wheelL2FiltVelocity_mps = 0;
+static volatile float wheelL3RawVelocity_mps, wheelL3FiltVelocity_mps = 0;
+static volatile float wheelR1RawVelocity_mps, wheelR1FiltVelocity_mps = 0;
+static volatile float wheelR2RawVelocity_mps, wheelR2FiltVelocity_mps = 0;
+static volatile float wheelR3RawVelocity_mps, wheelR3FiltVelocity_mps = 0;
+
+static volatile float wheelSize_m = 0.20; // 20cm circumference
+static volatile uint16_t encoderSignalsPerRound = 360; // 3 counts per motor round and a 120:1 gearbox
+static volatile uint16_t speedSensingTaskCycle_ms = 10; // 10ms task cycle time
 
 static volatile float referenceSpeedLeft = 0;
 static volatile float referenceSpeedRight = 0;
@@ -145,6 +189,8 @@ static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_I2C3_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
+static void MX_TIM9_Init(void);
+static void MX_TIM10_Init(void);
 void StartDefaultTask(void const * argument);
 void StartSensorTask(void const * argument);
 void StartControlTask(void const * argument);
@@ -153,6 +199,7 @@ void StartIdleTask(void const * argument);
 void StartLedTask(void const * argument);
 
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
+                                
                                 
                                 
                                 
@@ -219,6 +266,8 @@ int main(void)
   MX_TIM5_Init();
   MX_I2C3_Init();
   MX_USB_OTG_FS_PCD_Init();
+  MX_TIM9_Init();
+  MX_TIM10_Init();
   /* USER CODE BEGIN 2 */
   // 6*PWM signals for the 6 DC motors
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -246,7 +295,13 @@ int main(void)
   HAL_TIMEx_PWMN_Start(&htim5, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2);
   HAL_TIMEx_PWMN_Start(&htim5, TIM_CHANNEL_2);
+  // 1*PWM signal for buzzer
+  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
+  HAL_TIMEx_PWMN_Start(&htim9, TIM_CHANNEL_1);
+  //Start internal timer for 10us time measurement
+  HAL_TIM_Base_Start(&htim10);
   
+  // Test code START
   TIM1->CCR1 = 10*4800/100; //LEFT1
   TIM1->CCR2 = 10*4800/100; //LEFT2
   TIM1->CCR3 = 10*4800/100; //LEFT3
@@ -260,6 +315,8 @@ int main(void)
   TIM3->CCR4 = 5*20000/100; //SERVO4 - L4
   TIM5->CCR1 = 5*20000/100; //SERVO5 - L5
   TIM5->CCR2 = 5*20000/100; //SERVO6 - L6
+  
+  TIM2->CCR3 = 40*4800/100; //Buzzer
   
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET); //LEFT1 FW
   HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, GPIO_PIN_RESET); //LEFT1 RW
@@ -277,7 +334,7 @@ int main(void)
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5,  GPIO_PIN_RESET); //SEN2 OUT
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4,  GPIO_PIN_RESET); //SEN3 OUT
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5,  GPIO_PIN_RESET); //SEN4 OUT
-  
+  // Test code END
   
   BSP_ACCELERO_Init();
   MAGNET_Init();
@@ -782,6 +839,51 @@ static void MX_TIM5_Init(void)
 
 }
 
+/* TIM9 init function */
+static void MX_TIM9_Init(void)
+{
+
+  TIM_OC_InitTypeDef sConfigOC;
+
+  htim9.Instance = TIM9;
+  htim9.Init.Prescaler = 0;
+  htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim9.Init.Period = 4800;
+  htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  if (HAL_TIM_PWM_Init(&htim9) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+  HAL_TIM_MspPostInit(&htim9);
+
+}
+
+/* TIM10 init function */
+static void MX_TIM10_Init(void)
+{
+
+  htim10.Instance = TIM10;
+  htim10.Init.Prescaler = 960;
+  htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim10.Init.Period = 65535;
+  htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  if (HAL_TIM_Base_Init(&htim10) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+}
+
 /* USART6 init function */
 static void MX_USART6_UART_Init(void)
 {
@@ -855,11 +957,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct;
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
@@ -993,15 +1095,39 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
     break;
   case GPIO_PIN_6:
     sen1Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_6)) sen1Start = TIM10->CNT;
+    else {
+      sen1End = TIM10->CNT;
+      if (sen1End > sen1Start) sen1Length = sen1End-sen1Start;
+      else sen1Length = (sen1End+65535)-sen1Start;
+    }
     break; 
   case GPIO_PIN_7:
     sen2Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_7)) sen2Start = TIM10->CNT;
+    else {
+      sen2End = TIM10->CNT;
+      if (sen2End > sen2Start) sen2Length = sen2End-sen2Start;
+      else sen2Length = (sen2End+65535)-sen2Start;
+    }
     break; 
   case GPIO_PIN_8:
     sen3Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_8)) sen3Start = TIM10->CNT;
+    else {
+      sen3End = TIM10->CNT;
+      if (sen3End > sen3Start) sen3Length = sen3End-sen3Start;
+      else sen3Length = (sen3End+65535)-sen3Start;
+    }
     break; 
   case GPIO_PIN_9:
     sen4Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_9)) sen4Start = TIM10->CNT;
+    else {
+      sen4End = TIM10->CNT;
+      if (sen4End > sen4Start) sen4Length = sen4End-sen4Start;
+      else sen4Length = (sen4End+65535)-sen4Start;
+    }
     break; 
   default:
     break;
@@ -1083,17 +1209,224 @@ void StartDefaultTask(void const * argument)
 void StartSensorTask(void const * argument)
 {
   /* USER CODE BEGIN StartSensorTask */
+  uint32_t cycleCounter = 0;
+  uint32_t targetTick;
+  float compassBuffer[3];
+  float accelerometerBuffer[3] = {0};
+  
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_Buf,6);
   /* Infinite loop */
   for(;;)
   {
+    //test code START
     mot1Dir = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12);
     mot2Dir = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_13);
     mot3Dir = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_14);
     mot4Dir = HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_7);
     mot5Dir = HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_8);
     mot6Dir = HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_10);
-    osDelay(100);
+    internalCounter = TIM10->CNT;
+    //test code END
+    osDelay(speedSensingTaskCycle_ms);
+    cycleCounter++;
+    sen1Distance = sen1Length * 0.34/2;
+    sen2Distance = sen2Length * 0.34/2;
+    sen3Distance = sen3Length * 0.34/2;
+    sen4Distance = sen4Length * 0.34/2;
+    batteryVoltage1 = ADC_Values[0]*0.005; // ToDo adjust gain
+    batteryVoltage2 = ADC_Values[1]*0.005; // ToDo adjust gain
+    sen1AnalogValue = ADC_Values[2];
+    sen2AnalogValue = ADC_Values[3];
+    sen3AnalogValue = ADC_Values[4];
+    sen4AnalogValue = ADC_Values[5];
+    
+    if ((mot1Cntr - mot1CntrPrev) > 100){
+      wheelL1Odometer_m += (mot1Cntr - 65535 - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelL1Angle_deg += (mot1Cntr - 65535 - mot1CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else if ((mot1Cntr - mot1CntrPrev) < -100){
+      wheelL1Odometer_m += (mot1Cntr + 65535 - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelL1Angle_deg += (mot1Cntr + 65535 - mot1CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else {
+      wheelL1Odometer_m += (mot1Cntr - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelL1Angle_deg += (mot1Cntr - mot1CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    
+    if ((mot2Cntr - mot2CntrPrev) > 100){
+      wheelL2Odometer_m += (mot2Cntr - 65535 - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelL2Angle_deg += (mot2Cntr - 65535 - mot2CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else if ((mot2Cntr - mot2CntrPrev) < -100){
+      wheelL2Odometer_m += (mot2Cntr + 65535 - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelL2Angle_deg += (mot2Cntr + 65535 - mot2CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else {
+      wheelL2Odometer_m += (mot2Cntr - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelL2Angle_deg += (mot2Cntr - mot2CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    
+    if ((mot3Cntr - mot3CntrPrev) > 100){
+      wheelL3Odometer_m += (mot3Cntr - 65535 - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelL3Angle_deg += (mot3Cntr - 65535 - mot3CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else if ((mot3Cntr - mot3CntrPrev) < -100){
+      wheelL3Odometer_m += (mot3Cntr + 65535 - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelL3Angle_deg += (mot3Cntr + 65535 - mot3CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else {
+      wheelL3Odometer_m += (mot3Cntr - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelL3Angle_deg += (mot3Cntr - mot3CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    
+    if ((mot4Cntr - mot4CntrPrev) > 100){
+      wheelR1Odometer_m += (mot4Cntr - 65535 - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelR1Angle_deg += (mot4Cntr - 65535 - mot4CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else if ((mot4Cntr - mot4CntrPrev) < -100){
+      wheelR1Odometer_m += (mot4Cntr + 65535 - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelR1Angle_deg += (mot4Cntr + 65535 - mot4CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else {
+      wheelR1Odometer_m += (mot4Cntr - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelR1Angle_deg += (mot4Cntr - mot4CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    
+    if ((mot5Cntr - mot5CntrPrev) > 100){
+      wheelR2Odometer_m += (mot5Cntr - 65535 - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelR2Angle_deg += (mot5Cntr - 65535 - mot5CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else if ((mot5Cntr - mot5CntrPrev) < -100){
+      wheelR2Odometer_m += (mot5Cntr + 65535 - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelR2Angle_deg += (mot5Cntr + 65535 - mot5CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else {
+      wheelR2Odometer_m += (mot5Cntr - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelR2Angle_deg += (mot5Cntr - mot5CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    
+    if ((mot6Cntr - mot6CntrPrev) > 100){
+      wheelR3Odometer_m += (mot6Cntr - 65535 - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelR3Angle_deg += (mot6Cntr - 65535 - mot6CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else if ((mot6Cntr - mot6CntrPrev) < -100){
+      wheelR3Odometer_m += (mot6Cntr + 65535 - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelR3Angle_deg += (mot6Cntr + 65535 - mot6CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    else {
+      wheelR3Odometer_m += (mot6Cntr - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
+      wheelR3Angle_deg += (mot6Cntr - mot6CntrPrev) * 360 / encoderSignalsPerRound;
+    }
+    
+    wheelL1RawVelocity_mps = (wheelL1Odometer_m - wheelL1Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
+    wheelL2RawVelocity_mps = (wheelL2Odometer_m - wheelL2Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
+    wheelL3RawVelocity_mps = (wheelL3Odometer_m - wheelL3Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
+    wheelR1RawVelocity_mps = (wheelR1Odometer_m - wheelR1Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
+    wheelR2RawVelocity_mps = (wheelR2Odometer_m - wheelR2Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
+    wheelR3RawVelocity_mps = (wheelR3Odometer_m - wheelR3Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
+
+    wheelL1FiltVelocity_mps = filter2(wheelL1FiltVelocity_mps, wheelL1RawVelocity_mps, 0.35);
+    wheelL2FiltVelocity_mps = filter2(wheelL2FiltVelocity_mps, wheelL2RawVelocity_mps, 0.35);
+    wheelL3FiltVelocity_mps = filter2(wheelL3FiltVelocity_mps, wheelL3RawVelocity_mps, 0.35);
+    wheelR1FiltVelocity_mps = filter2(wheelR1FiltVelocity_mps, wheelR1RawVelocity_mps, 0.35);
+    wheelR2FiltVelocity_mps = filter2(wheelR2FiltVelocity_mps, wheelR2RawVelocity_mps, 0.35);
+    wheelR3FiltVelocity_mps = filter2(wheelR3FiltVelocity_mps, wheelR3RawVelocity_mps, 0.35);
+    
+    wheelL1Odometer_m_prev = wheelL1Odometer_m;
+    wheelL2Odometer_m_prev = wheelL2Odometer_m;
+    wheelL3Odometer_m_prev = wheelL3Odometer_m;
+    wheelR1Odometer_m_prev = wheelR1Odometer_m;
+    wheelR2Odometer_m_prev = wheelR2Odometer_m;
+    wheelR3Odometer_m_prev = wheelR3Odometer_m;
+    mot1CntrPrev = mot1Cntr;
+    mot2CntrPrev = mot2Cntr;
+    mot3CntrPrev = mot3Cntr;
+    mot4CntrPrev = mot4Cntr;
+    mot5CntrPrev = mot5Cntr;
+    mot6CntrPrev = mot6Cntr;
+    
+    if (cycleCounter % 10 == 0){
+      if (TIM10->CNT < 65534){
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET); //SEN1 trigger
+        targetTick = TIM10->CNT+1;
+        while (TIM10->CNT <= targetTick);
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET); //SEN1 trigger
+      }
+    }
+    
+    if (cycleCounter % 10 == 2){
+      if (TIM10->CNT < 65534){
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); //SEN2 trigger
+        targetTick = TIM10->CNT+1;
+        while (TIM10->CNT <= targetTick);
+        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); //SEN2 trigger
+      }
+    }
+    
+    if (cycleCounter % 10 == 4){
+      if (TIM10->CNT < 65534){
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_SET); //SEN3 trigger
+        targetTick = TIM10->CNT+1;
+        while (TIM10->CNT <= targetTick);
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_RESET); //SEN3 trigger
+      }
+    }
+    
+    if (cycleCounter % 10 == 6){
+      if (TIM10->CNT < 65534){
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET); //SEN4 trigger
+        targetTick = TIM10->CNT+1;
+        while (TIM10->CNT <= targetTick);
+        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_RESET); //SEN4 trigger
+      }
+    }
+    
+    if (cycleCounter % 4 == 0){
+      /* Read Acceleration*/
+      BSP_ACCELERO_GetXYZ(accelerometerBuffer);
+
+      accX = accelerometerBuffer[0];
+      accY = accelerometerBuffer[1];
+      accZ = accelerometerBuffer[2];
+      
+      accXFiltered = filter2(accXFiltered, accX, 0.2);
+      accYFiltered = filter2(accYFiltered, accY, 0.2);
+      accZFiltered = filter2(accZFiltered, accZ, 0.2);
+     
+      fNormAcc = sqrt((accXFiltered*accXFiltered)+(accYFiltered*accYFiltered)+(accZFiltered*accZFiltered));
+        
+      fSinRoll = accYFiltered/fNormAcc;
+      fCosRoll = sqrt(1.0-(fSinRoll * fSinRoll));
+      fSinPitch = accXFiltered/fNormAcc;
+      fCosPitch = sqrt(1.0-(fSinPitch * fSinPitch));
+        
+      if ( fSinRoll >0) {
+        if (fCosRoll>0) roll = acos(fCosRoll)*180/PI;
+        else            roll = acos(fCosRoll)*180/PI + 180;
+      }
+      else {
+        if (fCosRoll>0) roll = acos(fCosRoll)*180/PI + 360;
+        else            roll = acos(fCosRoll)*180/PI + 180;
+      }
+       
+      if ( fSinPitch >0) {
+        if (fCosPitch>0) pitch = acos(fCosPitch)*180/PI;
+        else             pitch = acos(fCosPitch)*180/PI + 180;
+      }
+      else {
+        if (fCosPitch>0) pitch = acos(fCosPitch)*180/PI + 360;
+        else             pitch = acos(fCosPitch)*180/PI + 180;
+      }
+
+      if (roll >=360)  roll = 360 - roll;
+      if (pitch >=360) pitch = 360 - pitch;
+      
+      /* Read Magnetometer*/
+      LSM303DLHC_MagReadXYZ(compassBuffer);
+      compassX = compassBuffer[0];
+      compassY = compassBuffer[1];
+      compassZ = compassBuffer[2];
+    }
   }
   /* USER CODE END StartSensorTask */
 }
