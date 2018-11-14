@@ -67,6 +67,9 @@ CRC_HandleTypeDef hcrc;
 I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c3;
 
+SPI_HandleTypeDef hspi5;
+DMA_HandleTypeDef hdma_spi5_tx;
+
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
@@ -191,6 +194,7 @@ static void MX_I2C3_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM9_Init(void);
 static void MX_TIM10_Init(void);
+static void MX_SPI5_Init(void);
 void StartDefaultTask(void const * argument);
 void StartSensorTask(void const * argument);
 void StartControlTask(void const * argument);
@@ -268,7 +272,9 @@ int main(void)
   MX_USB_OTG_FS_PCD_Init();
   MX_TIM9_Init();
   MX_TIM10_Init();
+  MX_SPI5_Init();
   /* USER CODE BEGIN 2 */
+  
   // 6*PWM signals for the 6 DC motors
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
@@ -298,6 +304,7 @@ int main(void)
   // 1*PWM signal for buzzer
   HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
   HAL_TIMEx_PWMN_Start(&htim9, TIM_CHANNEL_2);
+  
   //Start internal timer for 10us time measurement
   HAL_TIM_Base_Start(&htim10);
   
@@ -492,7 +499,7 @@ static void MX_ADC1_Init(void)
     */
   sConfig.Channel = ADC_CHANNEL_2;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_480CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
@@ -591,6 +598,30 @@ static void MX_I2C3_Init(void)
   hi2c3.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
   hi2c3.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
   if (HAL_I2C_Init(&hi2c3) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+}
+
+/* SPI5 init function */
+static void MX_SPI5_Init(void)
+{
+
+  /* SPI5 parameter configuration*/
+  hspi5.Instance = SPI5;
+  hspi5.Init.Mode = SPI_MODE_MASTER;
+  hspi5.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi5.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi5.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi5.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi5.Init.NSS = SPI_NSS_SOFT;
+  hspi5.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi5.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi5.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi5.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi5.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi5) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
@@ -931,8 +962,8 @@ static void MX_USB_OTG_FS_PCD_Init(void)
 static void MX_DMA_Init(void) 
 {
   /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
   __HAL_RCC_DMA2_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream3_IRQn interrupt configuration */
@@ -941,6 +972,9 @@ static void MX_DMA_Init(void)
   /* DMA2_Stream4_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream4_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream4_IRQn);
+  /* DMA2_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream5_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream5_IRQn);
 
 }
 
@@ -1240,11 +1274,11 @@ void StartSensorTask(void const * argument)
     sen3AnalogValue = ADC_Values[4];
     sen4AnalogValue = ADC_Values[5];
     
-    if ((mot1Cntr - mot1CntrPrev) > 100){
+    if ((mot1Cntr - mot1CntrPrev) > 32000){
       wheelL1Odometer_m += (mot1Cntr - 65535 - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelL1Angle_deg += (mot1Cntr - 65535 - mot1CntrPrev) * 360 / encoderSignalsPerRound;
     }
-    else if ((mot1Cntr - mot1CntrPrev) < -100){
+    else if ((mot1Cntr - mot1CntrPrev) < -32000){
       wheelL1Odometer_m += (mot1Cntr + 65535 - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelL1Angle_deg += (mot1Cntr + 65535 - mot1CntrPrev) * 360 / encoderSignalsPerRound;
     }
@@ -1253,11 +1287,11 @@ void StartSensorTask(void const * argument)
       wheelL1Angle_deg += (mot1Cntr - mot1CntrPrev) * 360 / encoderSignalsPerRound;
     }
     
-    if ((mot2Cntr - mot2CntrPrev) > 100){
+    if ((mot2Cntr - mot2CntrPrev) > 32000){
       wheelL2Odometer_m += (mot2Cntr - 65535 - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelL2Angle_deg += (mot2Cntr - 65535 - mot2CntrPrev) * 360 / encoderSignalsPerRound;
     }
-    else if ((mot2Cntr - mot2CntrPrev) < -100){
+    else if ((mot2Cntr - mot2CntrPrev) < -32000){
       wheelL2Odometer_m += (mot2Cntr + 65535 - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelL2Angle_deg += (mot2Cntr + 65535 - mot2CntrPrev) * 360 / encoderSignalsPerRound;
     }
@@ -1266,11 +1300,11 @@ void StartSensorTask(void const * argument)
       wheelL2Angle_deg += (mot2Cntr - mot2CntrPrev) * 360 / encoderSignalsPerRound;
     }
     
-    if ((mot3Cntr - mot3CntrPrev) > 100){
+    if ((mot3Cntr - mot3CntrPrev) > 32000){
       wheelL3Odometer_m += (mot3Cntr - 65535 - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelL3Angle_deg += (mot3Cntr - 65535 - mot3CntrPrev) * 360 / encoderSignalsPerRound;
     }
-    else if ((mot3Cntr - mot3CntrPrev) < -100){
+    else if ((mot3Cntr - mot3CntrPrev) < -32000){
       wheelL3Odometer_m += (mot3Cntr + 65535 - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelL3Angle_deg += (mot3Cntr + 65535 - mot3CntrPrev) * 360 / encoderSignalsPerRound;
     }
@@ -1279,11 +1313,11 @@ void StartSensorTask(void const * argument)
       wheelL3Angle_deg += (mot3Cntr - mot3CntrPrev) * 360 / encoderSignalsPerRound;
     }
     
-    if ((mot4Cntr - mot4CntrPrev) > 100){
+    if ((mot4Cntr - mot4CntrPrev) > 32000){
       wheelR1Odometer_m += (mot4Cntr - 65535 - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelR1Angle_deg += (mot4Cntr - 65535 - mot4CntrPrev) * 360 / encoderSignalsPerRound;
     }
-    else if ((mot4Cntr - mot4CntrPrev) < -100){
+    else if ((mot4Cntr - mot4CntrPrev) < -32000){
       wheelR1Odometer_m += (mot4Cntr + 65535 - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelR1Angle_deg += (mot4Cntr + 65535 - mot4CntrPrev) * 360 / encoderSignalsPerRound;
     }
@@ -1292,11 +1326,11 @@ void StartSensorTask(void const * argument)
       wheelR1Angle_deg += (mot4Cntr - mot4CntrPrev) * 360 / encoderSignalsPerRound;
     }
     
-    if ((mot5Cntr - mot5CntrPrev) > 100){
+    if ((mot5Cntr - mot5CntrPrev) > 32000){
       wheelR2Odometer_m += (mot5Cntr - 65535 - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelR2Angle_deg += (mot5Cntr - 65535 - mot5CntrPrev) * 360 / encoderSignalsPerRound;
     }
-    else if ((mot5Cntr - mot5CntrPrev) < -100){
+    else if ((mot5Cntr - mot5CntrPrev) < -32000){
       wheelR2Odometer_m += (mot5Cntr + 65535 - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelR2Angle_deg += (mot5Cntr + 65535 - mot5CntrPrev) * 360 / encoderSignalsPerRound;
     }
@@ -1305,11 +1339,11 @@ void StartSensorTask(void const * argument)
       wheelR2Angle_deg += (mot5Cntr - mot5CntrPrev) * 360 / encoderSignalsPerRound;
     }
     
-    if ((mot6Cntr - mot6CntrPrev) > 100){
+    if ((mot6Cntr - mot6CntrPrev) > 32000){
       wheelR3Odometer_m += (mot6Cntr - 65535 - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelR3Angle_deg += (mot6Cntr - 65535 - mot6CntrPrev) * 360 / encoderSignalsPerRound;
     }
-    else if ((mot6Cntr - mot6CntrPrev) < -100){
+    else if ((mot6Cntr - mot6CntrPrev) < -32000){
       wheelR3Odometer_m += (mot6Cntr + 65535 - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
       wheelR3Angle_deg += (mot6Cntr + 65535 - mot6CntrPrev) * 360 / encoderSignalsPerRound;
     }
@@ -1514,12 +1548,16 @@ void StartIdleTask(void const * argument)
 void StartLedTask(void const * argument)
 {
   /* USER CODE BEGIN StartLedTask */
-  WS2812_One_RGB(3,(WS2812_RGB_t){0,0,10},1);
+  WS2812_One_RGB(0,(WS2812_RGB_t){0,10,0},0);
+  WS2812_One_RGB(1,(WS2812_RGB_t){10,10,10},0);
+  WS2812_One_RGB(2,(WS2812_RGB_t){10,0,0},0);
   /* Infinite loop */
   for(;;)
   {
-    osDelay(250);
+    osDelay(150);
+    HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
     WS2812_Rotate_Left(1);
+    HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
 
   }
   /* USER CODE END StartLedTask */
@@ -1575,6 +1613,7 @@ void assert_failed(uint8_t* file, uint32_t line)
   /* USER CODE BEGIN 6 */
   /* User can add his own implementation to report the file name and line number,
      tex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  while(1);
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

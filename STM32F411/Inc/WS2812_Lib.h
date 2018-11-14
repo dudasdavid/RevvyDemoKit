@@ -7,13 +7,13 @@
 
 #include "stm32f4xx_hal.h"
 
-#define WS2812_NUM_LEDS_CH1		4
+#define WS2812_NUM_LEDS_CH1		16
 
 #define  WS2812_TIM_PRESCALE    0  // F_T3  = 80 MHz (12.5ns)
 #define  WS2812_TIM_PERIODE   	119  // F_PWM = 800 kHz (1.25us)
 
-#define  WS2812_LO_TIME        	34  // 34 * 12.5ns = 0.43us
-#define  WS2812_HI_TIME        	65  // 65 * 12.5ns = 0.81us
+#define  WS2812_LO_TIME        	28  // 34 * 12.5ns = 0.43us
+#define  WS2812_HI_TIME        	56  // 65 * 12.5ns = 0.81us
 
 //--------------------------------------------------------------
 // RGB LED Farbdefinition (3 x 8bit)
