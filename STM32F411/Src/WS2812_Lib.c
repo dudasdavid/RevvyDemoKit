@@ -3,210 +3,283 @@
  * Based upon the WS2812 Library for STM32F4 from Uwe Becker, http://mikrocontroller.bplaced.net/wordpress/?page_id=3665
  *
  * @Author: Nicolas Dammin, 2016
+ * @Author: Dávid Dudás, 2018
+ * @Author: Dániel Buga, 2018
  */
-#include "stm32f4xx_hal.h"
 #include "WS2812_Lib.h"
+#include "stm32f4xx.h"
+#include <string.h>
 
+/* Raw color values for the individual LEDs */
+static WS2812_RGB_t WS2812_LED_BUF_CH1[WS2812_NUM_LEDS_CH1];
+
+#ifdef WS2812_USE_TIMER
 extern TIM_HandleTypeDef htim4;
+
+/* Buffer that contains duty cycle values for PWM generation using timer */
+static uint16_t WS2812_TIM_BUF[WS2812_OUT_BITS];
+/* Flag to indicate that PWM generation is in progress */
+static uint8_t dma_ready = 1;
+#endif
+
+#ifdef WS2812_USE_SPI
 extern SPI_HandleTypeDef hspi5;
-//extern DMA_HandleTypeDef hdma_tim2_ch2_ch4;
 
-uint16_t WS2812_TIM_BUF[WS2812_BUFLEN];
-uint8_t WS2812_SPI_BUF[WS2812_BUFLEN*3];
+/* Buffer that contains bit patterns for PWM generation using SPI peripherial
+ * We are using 3 bits per LED bit, so 3/8 bytes, rounded up */
+static uint8_t WS2812_SPI_BUF[(WS2812_OUT_BITS * 3 + 7) / 8];
+/* Flag to indicate that PWM generation is in progress */
+static uint8_t spi_dma_ready = 1;
+#endif
 
-WS2812_RGB_t WS2812_LED_BUF_CH1[WS2812_NUM_LEDS_CH1];
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(x)           (sizeof(x) / sizeof((x)[0]))
+#endif
 
-uint8_t dma_ready = 1;
-uint8_t spi_dma_ready = 1;
-   
+#ifndef IS_BIT_SET
+#define IS_BIT_SET(var, bit)    (((var) & (1 << (7 - (bit)))) != 0u)
+#endif
+
+#ifdef WS2812_USE_TIMER
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
 {
 	dma_ready = 1;
 }
 
-void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
-{
-	spi_dma_ready = 1;
-}
-
 void HAL_TIM_ErrorCallback(TIM_HandleTypeDef *htim)
 {
-  if (htim->Instance == TIM4)
-  {
-    //while(1);
-  }
-}
-
-void fill_buffer(uint32_t pos, uint8_t color)
-{
-    WS2812_TIM_BUF[pos++]=((color & 0x80) != 0)?WS2812_HI_TIME:WS2812_LO_TIME;
-    WS2812_TIM_BUF[pos++]=((color & 0x40) != 0)?WS2812_HI_TIME:WS2812_LO_TIME;
-    WS2812_TIM_BUF[pos++]=((color & 0x20) != 0)?WS2812_HI_TIME:WS2812_LO_TIME;
-    WS2812_TIM_BUF[pos++]=((color & 0x10) != 0)?WS2812_HI_TIME:WS2812_LO_TIME;
-    WS2812_TIM_BUF[pos++]=((color & 0x08) != 0)?WS2812_HI_TIME:WS2812_LO_TIME;
-    WS2812_TIM_BUF[pos++]=((color & 0x04) != 0)?WS2812_HI_TIME:WS2812_LO_TIME;
-    WS2812_TIM_BUF[pos++]=((color & 0x02) != 0)?WS2812_HI_TIME:WS2812_LO_TIME;
-    WS2812_TIM_BUF[pos++]=((color & 0x01) != 0)?WS2812_HI_TIME:WS2812_LO_TIME;
-}
-
-void fill_spi_buffer_bit(uint32_t pos, uint8_t bit)
-{
-    if (!bit)
+    if (htim->Instance == TIM4)
     {
-        WS2812_SPI_BUF[pos++] = 0xFFu;
-        WS2812_SPI_BUF[pos++] = 0x00u;
-        WS2812_SPI_BUF[pos++] = 0x00u;
-    }
-    else
-    {
-        WS2812_SPI_BUF[pos++] = 0xFFu;
-        WS2812_SPI_BUF[pos++] = 0xFFu;
-        WS2812_SPI_BUF[pos++] = 0x80u;
+        //while(1);
     }
 }
 
-void spi_fill_buffer(uint32_t pos, uint8_t color)
+void timer_set_byte(uint32_t pos, uint8_t color)
 {
-    fill_spi_buffer_bit(pos, (color & 0x80));
-    pos += 3u;
-    fill_spi_buffer_bit(pos, (color & 0x40));
-    pos += 3u;
-    fill_spi_buffer_bit(pos, (color & 0x20));
-    pos += 3u;
-    fill_spi_buffer_bit(pos, (color & 0x10));
-    pos += 3u;
-    fill_spi_buffer_bit(pos, (color & 0x08));
-    pos += 3u;
-    fill_spi_buffer_bit(pos, (color & 0x04));
-    pos += 3u;
-    fill_spi_buffer_bit(pos, (color & 0x02));
-    pos += 3u;
-    fill_spi_buffer_bit(pos, (color & 0x01));
+    for (uint8_t i = 0u; i < 8u; i++)
+    {
+        WS2812_TIM_BUF[pos + i] = IS_BIT_SET(color, i) ? WS2812_HI_TIME : WS2812_LO_TIME;
+    }
+}
+
+/**
+ * Writes data of a pixel to the output buffer used by the timer-based PWM
+ *
+ * One pixel requires 24 data bits, 8 bits per color. WS2812 uses pulse width
+ * encoding to allow communicating over a single wire. The encoding requires
+ * 2/3 duty cycle for a high bit and 1/3 for a low bit, which we are generating
+ * using a 16bit timer, so we need 16 bits of memory for every single "LED-bit".
+ *
+ * @param in pixelPosition  The index of the pixel to write to the output buffer
+ */
+static void timer_set_pixel(uint32_t pixelPosition)
+{
+    uint32_t startingBytePosition = pixelPosition * 24u;
+
+    timer_set_byte(startingBytePosition, WS2812_LED_BUF_CH1[pixelPosition].green);
+    timer_set_byte(startingBytePosition + 8, WS2812_LED_BUF_CH1[pixelPosition].red);
+    timer_set_byte(startingBytePosition + 16, WS2812_LED_BUF_CH1[pixelPosition].blue);
 }
 
 /**
  * Internal function, calculates the HI or LO values for the 800 kHz WS2812 signal and puts them into a buffer for the Timer-DMA
  *
  */
-void calcBuf(void)
+static void calcBuf_Timer(void)
 {
-  uint32_t n;
-  WS2812_RGB_t led;
+    /* set timings for all LEDs */
+    for (uint32_t n = 0u; n < WS2812_NUM_LEDS_CH1; n++)
+    {
+        timer_set_pixel(n);
+    }
 
-  uint32_t pos = 0;
-  uint32_t spi_pos = 0;
-  // set timings for all LEDs
-  for(n=0;n<WS2812_NUM_LEDS_CH1;n++) {
-    led=WS2812_LED_BUF_CH1[n];
+    /* reset pulse after all LEDs have been updated */
+    memset(&WS2812_TIM_BUF[WS2812_NUM_LEDS_CH1], 0, WS2812_NUM_RESET_BITS);
+}
+#endif /* WS2812_USE_TIMER */
 
-    // Col:Green , Bit:7..0
-    fill_buffer(pos, led.green);
-    pos += 8u;
-    fill_buffer(pos, led.red);
-    pos += 8u;
-    fill_buffer(pos, led.blue);
-    pos += 8u;
-    
-    spi_fill_buffer(spi_pos, led.green);
-    spi_pos += 24u;
-    spi_fill_buffer(spi_pos, led.red);
-    spi_pos += 24u;
-    spi_fill_buffer(spi_pos, led.blue);
-    spi_pos += 24u;
-  }
-
-  // short pause after all LEDs have been updated
-  for(n=0;n<48;n++) {
-    WS2812_TIM_BUF[pos++]=0;
-    WS2812_SPI_BUF[spi_pos++]=0;
-    WS2812_SPI_BUF[spi_pos++]=0;
-    WS2812_SPI_BUF[spi_pos++]=0;
-  }
+#ifdef WS2812_USE_SPI
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+    spi_dma_ready = 1;
 }
 
 /**
- * Internal function; start DMA transfer
+ * Sets a single LED-bit value in the output buffer
+ *
+ * @param bitPosition   The position of the bit to set, 0 indexed
+ * @param bitValue      The desired bit value
  */
-void startDMA(void) {
-	//uint8_t test[8] = {10};
-	dma_ready = 0;
-	spi_dma_ready = 0;
-        //HAL_TIM_PWM_Stop_DMA (&htim2, TIM_CHANNEL_2);
-	HAL_TIM_PWM_Start_DMA(&htim4, TIM_CHANNEL_2, (uint32_t *)WS2812_TIM_BUF, WS2812_BUFLEN);
-	HAL_SPI_Transmit_DMA(&hspi5, WS2812_SPI_BUF, sizeof(WS2812_SPI_BUF));
+void spi_set_bit(uint32_t bitPosition, uint8_t bitValue)
+{
+    /* precomputed bit patterns for the '1' bit value */
+    static const uint8_t highBitPatternLUT[] =
+    {
+        0b11000000,
+        0b00011000,
+        0b00000011,
+        0b01100000,
+        0b00001100,
+        0b00000001,
+        0b00110000,
+        0b00000011
+    };
+
+    /* which byte we need to write to */
+    uint32_t byte = (bitPosition * 3) / 8;
+
+    uint8_t index = bitPosition % 8u;
+    if (bitValue == 0)
+    {
+        /* we can set the bit pattern in one go */
+        WS2812_SPI_BUF[byte] |= (1 << (7u - index));
+    }
+    else
+    {
+        /* we can set the bit pattern in one go */
+        WS2812_SPI_BUF[byte] |= highBitPatternLUT[index];
+        if (index == 5u)
+        {
+            /* we need to write to two bytes
+             * let's assume that bits are written serially so no need to OR */
+            WS2812_SPI_BUF[byte + 1] = 0x80u;
+        }
+    }
 }
 
-void WS2812_Refresh(void) {
+/**
+ * Sets a single LED-byte value in the output buffer
+ *
+ * @param bytePosition   The position of the byte to set, 0 indexed
+ * @param byteValue      The desired byte value
+ */
+void spi_set_byte(uint32_t bytePosition, uint8_t byteValue)
+{
+    uint32_t startingBitPosition = bytePosition * 8u;
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        spi_set_bit(startingBitPosition + i, IS_BIT_SET(byteValue, i));
+    }
+}
 
-	while(!dma_ready);
-	while(!spi_dma_ready);
-	calcBuf();
-	startDMA();
+/**
+ * Writes data of a pixel to the output buffer used by the SPI-based PWM
+ *
+ * One pixel requires 24 data bits, 8 bits per color. WS2812 uses pulse width
+ * encoding to allow communicating over a single wire. The encoding requires
+ * 2/3 duty cycle for a high bit and 1/3 for a low bit, so we need to shift 3
+ * bits out for every single "LED-bit".
+ *
+ * @param in pixelPosition  The index of the pixel to write to the output buffer
+ */
+static void spi_set_pixel(uint32_t pixelPosition)
+{
+    uint32_t startingBytePosition = pixelPosition * 3u;
+
+    spi_set_byte(startingBytePosition, WS2812_LED_BUF_CH1[pixelPosition].green);
+    spi_set_byte(startingBytePosition + 1u, WS2812_LED_BUF_CH1[pixelPosition].red);
+    spi_set_byte(startingBytePosition + 2u, WS2812_LED_BUF_CH1[pixelPosition].blue);
+}
+
+static void calcBuf_SPI( void )
+{
+    /* Filling the SPI buffer uses logical or, so we need to clear it first */
+    memset(WS2812_SPI_BUF, 0, sizeof(WS2812_SPI_BUF));
+
+    /* set timings for all LEDs */
+    for (uint32_t n = 0u; n < WS2812_NUM_LEDS_CH1; n++)
+    {
+        spi_set_pixel(n);
+    }
+}
+#endif /* WS2812_USE_SPI */
+
+void WS2812_Refresh(void)
+{
+#ifdef WS2812_USE_TIMER
+    while (!dma_ready);
+    dma_ready = 0;
+
+    calcBuf_Timer();
+    HAL_TIM_PWM_Start_DMA(&htim4, TIM_CHANNEL_2, (uint32_t *) WS2812_TIM_BUF, ARRAY_SIZE(WS2812_TIM_BUF));
+#endif
+
+#ifdef WS2812_USE_SPI
+    while (!spi_dma_ready);
+    spi_dma_ready = 0;
+
+    calcBuf_SPI();
+    HAL_SPI_Transmit_DMA(&hspi5, WS2812_SPI_BUF, ARRAY_SIZE(WS2812_SPI_BUF));
+#endif
 }
 
 /**
  * Set all LEDs to 0 (off) and update
  */
-void WS2812_Clear(void) {
-	uint16_t num;
-
-	for(num = 0; num < WS2812_NUM_LEDS_CH1; num++) {
-		WS2812_LED_BUF_CH1[num] = (WS2812_RGB_t){0,0,0};
-	}
-
-	WS2812_Refresh();
+void WS2812_Clear(void)
+{
+    WS2812_All_RGB((WS2812_RGB_t) { 0, 0, 0 }, 1);
 }
 
 /**
  * Convert HSV-Value to RGB Value for WS2812 LEDs
  * (from www.ulrichradig.de)
  */
-void WS2812_RGB2HSV(WS2812_HSV_t hsv_col, WS2812_RGB_t *rgb_col)
+void WS2812_HSV2RGB(WS2812_HSV_t hsv_col, WS2812_RGB_t *rgb_col)
 {
-  uint8_t diff;
+    /* calculate base color from hue */
+    hsv_col.h  = hsv_col.h % 360;
+    uint16_t h = hsv_col.h % 60;
 
-  // Grenzwerte
-  if(hsv_col.h>359) hsv_col.h=359;
-  if(hsv_col.s>100) hsv_col.s=100;
-  if(hsv_col.v>100) hsv_col.v=100;
+    uint16_t c = (425 * h) / 100;
+    if (hsv_col.h <= 60)
+    {
+        rgb_col->red = 255;
+        rgb_col->green = c;
+        rgb_col->blue = 0;
+    }
+    else if (hsv_col.h <= 120)
+    {
+        rgb_col->red = 255 - c;
+        rgb_col->green = 255;
+        rgb_col->blue = 0;
+    }
+    else if (hsv_col.h <= 180)
+    {
+        rgb_col->red = 0;
+        rgb_col->green = 255;
+        rgb_col->blue = c;
+    }
+    else if (hsv_col.h <= 240)
+    {
+        rgb_col->red = 0;
+        rgb_col->green = 255 - c;
+        rgb_col->blue = 255;
+    }
+    else if (hsv_col.h <= 300)
+    {
+        rgb_col->red = c;
+        rgb_col->green = 0;
+        rgb_col->blue = 255;
+    }
+    else
+    {
+        rgb_col->red = 255;
+        rgb_col->green = 0;
+        rgb_col->blue = 255 - c;
+    }
 
-  if(hsv_col.h < 61) {
-    rgb_col->red = 255;
-    rgb_col->green = (425 * hsv_col.h) / 100;
-    rgb_col->blue = 0;
-  }else if(hsv_col.h < 121){
-    rgb_col->red = 255 - ((425 * (hsv_col.h-60))/100);
-    rgb_col->green = 255;
-    rgb_col->blue = 0;
-  }else if(hsv_col.h < 181){
-    rgb_col->red = 0;
-    rgb_col->green = 255;
-    rgb_col->blue = (425 * (hsv_col.h-120))/100;
-  }else if(hsv_col.h < 241){
-    rgb_col->red = 0;
-    rgb_col->green = 255 - ((425 * (hsv_col.h-180))/100);
-    rgb_col->blue = 255;
-  }else if(hsv_col.h < 301){
-    rgb_col->red = (425 * (hsv_col.h-240))/100;
-    rgb_col->green = 0;
-    rgb_col->blue = 255;
-  }else {
-    rgb_col->red = 255;
-    rgb_col->green = 0;
-    rgb_col->blue = 255 - ((425 * (hsv_col.h-300))/100);
-  }
+    /* adjust saturation */
+    uint16_t s = (hsv_col.s > 100) ? 0 : (100 - hsv_col.s);
+    rgb_col->red   = rgb_col->red   + ((255 - rgb_col->red  ) * s) / 100;
+    rgb_col->green = rgb_col->green + ((255 - rgb_col->green) * s) / 100;
+    rgb_col->blue  = rgb_col->blue  + ((255 - rgb_col->blue ) * s) / 100;
 
-  hsv_col.s = 100 - hsv_col.s;
-  diff = ((255 - rgb_col->red) * hsv_col.s)/100;
-  rgb_col->red = rgb_col->red + diff;
-  diff = ((255 - rgb_col->green) * hsv_col.s)/100;
-  rgb_col->green = rgb_col->green + diff;
-  diff = ((255 - rgb_col->blue) * hsv_col.s)/100;
-  rgb_col->blue = rgb_col->blue + diff;
-
-  rgb_col->red = (rgb_col->red * hsv_col.v)/100;
-  rgb_col->green = (rgb_col->green * hsv_col.v)/100;
-  rgb_col->blue = (rgb_col->blue * hsv_col.v)/100;
+    /* adjust lightness */
+    uint16_t v = (hsv_col.v > 100) ? 100 : hsv_col.v;
+    rgb_col->red   = (rgb_col->red   * v) / 100;
+    rgb_col->green = (rgb_col->green * v) / 100;
+    rgb_col->blue  = (rgb_col->blue  * v) / 100;
 }
  
 /**
@@ -214,11 +287,15 @@ void WS2812_RGB2HSV(WS2812_HSV_t hsv_col, WS2812_RGB_t *rgb_col)
  */
 void WS2812_One_RGB(uint32_t nr, WS2812_RGB_t rgb_col, uint8_t refresh)
 {
-  if(nr<WS2812_NUM_LEDS_CH1) {
-	  WS2812_LED_BUF_CH1[nr]=rgb_col;
+    if (nr < WS2812_NUM_LEDS_CH1)
+    {
+        WS2812_LED_BUF_CH1[nr] = rgb_col;
 
-    if(refresh==1) WS2812_Refresh();
-  }
+        if (refresh == 1)
+        {
+            WS2812_Refresh();
+        }
+    }
 }
 
 /**
@@ -226,12 +303,14 @@ void WS2812_One_RGB(uint32_t nr, WS2812_RGB_t rgb_col, uint8_t refresh)
  */
 void WS2812_All_RGB(WS2812_RGB_t rgb_col, uint8_t refresh)
 {
-  uint32_t n;
-
-  for(n=0;n<WS2812_NUM_LEDS_CH1;n++) {
-	  WS2812_LED_BUF_CH1[n]=rgb_col;
-  }
-  if(refresh==1) WS2812_Refresh();
+    for (uint32_t n = 0u; n < WS2812_NUM_LEDS_CH1; n++)
+    {
+        WS2812_LED_BUF_CH1[n] = rgb_col;
+    }
+    if (refresh == 1)
+    {
+        WS2812_Refresh();
+    }
 }
 
 /**
@@ -239,15 +318,15 @@ void WS2812_All_RGB(WS2812_RGB_t rgb_col, uint8_t refresh)
  */
 void WS2812_One_HSV(uint32_t nr, WS2812_HSV_t hsv_col, uint8_t refresh)
 {
-  WS2812_RGB_t rgb_col;
+    if (nr < WS2812_NUM_LEDS_CH1)
+    {
+        WS2812_HSV2RGB(hsv_col, &WS2812_LED_BUF_CH1[nr]);
 
-  if(nr<WS2812_NUM_LEDS_CH1) {
-    // convert to RGB
-    WS2812_RGB2HSV(hsv_col, &rgb_col);
-    WS2812_LED_BUF_CH1[nr]=rgb_col;
-
-    if(refresh==1) WS2812_Refresh();
-  }
+        if (refresh == 1)
+        {
+            WS2812_Refresh();
+        }
+    }
 }
 
 /**
@@ -255,15 +334,53 @@ void WS2812_One_HSV(uint32_t nr, WS2812_HSV_t hsv_col, uint8_t refresh)
  */
 void WS2812_All_HSV(WS2812_HSV_t hsv_col, uint8_t refresh)
 {
-  uint32_t n;
-  WS2812_RGB_t rgb_col;
+    WS2812_RGB_t rgb_col;
+    WS2812_HSV2RGB(hsv_col, &rgb_col);
+    WS2812_All_RGB(rgb_col, refresh);
+}
 
-  // convert to RGB
-  WS2812_RGB2HSV(hsv_col, &rgb_col);
-  for(n=0;n<WS2812_NUM_LEDS_CH1;n++) {
-	  WS2812_LED_BUF_CH1[n]=rgb_col;
-  }
-  if(refresh==1) WS2812_Refresh();
+/**
+ * Shift all LED values one to the right.
+ *
+ * @param colorToInsert The new LED color to shift in
+ * @param refresh       Start sending the buffer
+ */
+static void WS2812_Internal_Shift_Right_Using(WS2812_RGB_t colorToInsert, uint8_t refresh)
+{
+#if (WS2812_NUM_LEDS_CH1 > 1)
+    for (uint32_t n = WS2812_NUM_LEDS_CH1 - 1; n > 0; n--)
+    {
+        WS2812_LED_BUF_CH1[n] = WS2812_LED_BUF_CH1[n - 1];
+    }
+    WS2812_LED_BUF_CH1[0] = colorToInsert;
+
+    if (refresh == 1)
+    {
+        WS2812_Refresh();
+    }
+#endif
+}
+
+/**
+ * Shift all LED values one to the left.
+ *
+ * @param colorToInsert The new LED color to shift in
+ * @param refresh       Start sending the buffer
+ */
+static void WS2812_Internal_Shift_Left_Using(WS2812_RGB_t colorToInsert, uint8_t refresh)
+{
+#if (WS2812_NUM_LEDS_CH1 > 1)
+    for (uint32_t n = 1; n < WS2812_NUM_LEDS_CH1; n++)
+    {
+        WS2812_LED_BUF_CH1[n - 1] = WS2812_LED_BUF_CH1[n];
+    }
+    WS2812_LED_BUF_CH1[WS2812_NUM_LEDS_CH1 - 1] = colorToInsert;
+
+    if (refresh == 1)
+    {
+        WS2812_Refresh();
+    }
+#endif
 }
 
 /**
@@ -271,33 +388,20 @@ void WS2812_All_HSV(WS2812_HSV_t hsv_col, uint8_t refresh)
  */
 void WS2812_Shift_Left(uint8_t refresh)
 {
-  uint32_t n;
-
-  if(WS2812_NUM_LEDS_CH1>1) {
-    for(n=1;n<WS2812_NUM_LEDS_CH1;n++) {
-    	WS2812_LED_BUF_CH1[n-1]=WS2812_LED_BUF_CH1[n];
-    }
-    WS2812_LED_BUF_CH1[n-1]=(WS2812_RGB_t){0,0,0};
-
-    if(refresh==1) WS2812_Refresh();
-  }
+#if (WS2812_NUM_LEDS_CH1 > 1)
+    WS2812_Internal_Shift_Left_Using((WS2812_RGB_t) { 0, 0, 0 }, refresh);
+#endif
 }
+
 
 /**
  * Shift all LED values one to the right. First one will be turned off
  */
 void WS2812_Shift_Right(uint8_t refresh)
 {
-  uint32_t n;
-
-  if(WS2812_NUM_LEDS_CH1>1) {
-    for(n=WS2812_NUM_LEDS_CH1-1;n>0;n--) {
-    	WS2812_LED_BUF_CH1[n]=WS2812_LED_BUF_CH1[n-1];
-    }
-    WS2812_LED_BUF_CH1[n]=(WS2812_RGB_t){0,0,0};
-
-    if(refresh==1) WS2812_Refresh();
-  }
+#if (WS2812_NUM_LEDS_CH1 > 1)
+    WS2812_Internal_Shift_Right_Using((WS2812_RGB_t) { 0, 0, 0 }, refresh);
+#endif
 }
 
 /**
@@ -305,36 +409,18 @@ void WS2812_Shift_Right(uint8_t refresh)
  */
 void WS2812_Rotate_Left(uint8_t refresh)
 {
-  uint32_t n;
-  WS2812_RGB_t d;
-
-  if(WS2812_NUM_LEDS_CH1>1) {
-    d=WS2812_LED_BUF_CH1[0];
-    for(n=1;n<WS2812_NUM_LEDS_CH1;n++) {
-    	WS2812_LED_BUF_CH1[n-1]=WS2812_LED_BUF_CH1[n];
-    }
-    WS2812_LED_BUF_CH1[n-1]=d;
-
-    if(refresh==1) WS2812_Refresh();
-  }
+#if (WS2812_NUM_LEDS_CH1 > 1)
+    WS2812_Internal_Shift_Left_Using(WS2812_LED_BUF_CH1[0], refresh);
+#endif
 }
 
 /**
- * Shift all LED values one to the right. First LED value will be the previous last value
+ * Shift all LED values one to the right. Last LED value will be the previous first value
  */
 void WS2812_Rotate_Right(uint8_t refresh)
 {
-  uint32_t n;
-  WS2812_RGB_t d;
-
-  if(WS2812_NUM_LEDS_CH1>1) {
-    d=WS2812_LED_BUF_CH1[WS2812_NUM_LEDS_CH1-1];
-    for(n=WS2812_NUM_LEDS_CH1-1;n>0;n--) {
-    	WS2812_LED_BUF_CH1[n]=WS2812_LED_BUF_CH1[n-1];
-    }
-    WS2812_LED_BUF_CH1[n]=d;
-
-    if(refresh==1) WS2812_Refresh();
-  }
+#if (WS2812_NUM_LEDS_CH1 > 1)
+    WS2812_Internal_Shift_Right_Using(WS2812_LED_BUF_CH1[WS2812_NUM_LEDS_CH1 - 1], refresh);
+#endif
 }
 
