@@ -122,7 +122,7 @@ void spi_set_bit(uint32_t bitPosition, uint8_t bitValue)
         0x0C,
         0x01,
         0x30,
-        0x03
+        0x06
     };
 
     /* which byte we need to write to */
