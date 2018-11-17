@@ -125,7 +125,7 @@ void spi_set_bit(uint32_t bitPosition, uint8_t bitValue)
         0x06
     };
     /* precomputed bit patterns for the '0' bit value */
-    static const uint8_t highBitPatternLUT[] =
+    static const uint8_t lowBitPatternLUT[] =
     {
         0x80,
         0x10,
