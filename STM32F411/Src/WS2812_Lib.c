@@ -124,6 +124,18 @@ void spi_set_bit(uint32_t bitPosition, uint8_t bitValue)
         0x30,
         0x06
     };
+    /* precomputed bit patterns for the '0' bit value */
+    static const uint8_t highBitPatternLUT[] =
+    {
+        0x80,
+        0x10,
+        0x02,
+        0x40,
+        0x08,
+        0x01,
+        0x20,
+        0x04
+    };
 
     /* which byte we need to write to */
     uint32_t byte = (bitPosition * 3) / 8;
@@ -132,7 +144,7 @@ void spi_set_bit(uint32_t bitPosition, uint8_t bitValue)
     if (bitValue == 0)
     {
         /* we can set the bit pattern in one go */
-        WS2812_SPI_BUF[byte] |= (1 << (7u - index));
+        WS2812_SPI_BUF[byte] |= lowBitPatternLUT[index];
     }
     else
     {
