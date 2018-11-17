@@ -115,14 +115,14 @@ void spi_set_bit(uint32_t bitPosition, uint8_t bitValue)
     /* precomputed bit patterns for the '1' bit value */
     static const uint8_t highBitPatternLUT[] =
     {
-        0b11000000,
-        0b00011000,
-        0b00000011,
-        0b01100000,
-        0b00001100,
-        0b00000001,
-        0b00110000,
-        0b00000011
+        0xC0,
+        0x18,
+        0x03,
+        0x60,
+        0x0C,
+        0x01,
+        0x30,
+        0x03
     };
 
     /* which byte we need to write to */
