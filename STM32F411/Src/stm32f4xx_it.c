@@ -1,3 +1,4 @@
+/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file    stm32f4xx_it.c
@@ -30,12 +31,42 @@
   *
   ******************************************************************************
   */
+/* USER CODE END Header */
+
 /* Includes ------------------------------------------------------------------*/
-#include "stm32f4xx_hal.h"
-#include "stm32f4xx.h"
+#include "main.h"
 #include "stm32f4xx_it.h"
 #include "cmsis_os.h"
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+/* USER CODE END Includes */
 
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN TD */
+
+/* USER CODE END TD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+ 
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 #include "WS2812_Lib.h"
 /* USER CODE END 0 */
@@ -46,26 +77,15 @@ extern DMA_HandleTypeDef hdma_spi5_tx;
 extern DMA_HandleTypeDef hdma_tim4_ch2;
 extern TIM_HandleTypeDef htim1;
 extern UART_HandleTypeDef huart6;
-
 extern TIM_HandleTypeDef htim11;
 
+/* USER CODE BEGIN EV */
+
+/* USER CODE END EV */
+
 /******************************************************************************/
-/*            Cortex-M4 Processor Interruption and Exception Handlers         */ 
+/*           Cortex-M4 Processor Interruption and Exception Handlers          */ 
 /******************************************************************************/
-
-/**
-* @brief This function handles System tick timer.
-*/
-void SysTick_Handler(void)
-{
-  /* USER CODE BEGIN SysTick_IRQn 0 */
-
-  /* USER CODE END SysTick_IRQn 0 */
-  osSystickHandler();
-  /* USER CODE BEGIN SysTick_IRQn 1 */
-
-  /* USER CODE END SysTick_IRQn 1 */
-}
 
 /******************************************************************************/
 /* STM32F4xx Peripheral Interrupt Handlers                                    */
@@ -75,8 +95,8 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
-* @brief This function handles EXTI line0 interrupt.
-*/
+  * @brief This function handles EXTI line0 interrupt.
+  */
 void EXTI0_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI0_IRQn 0 */
@@ -89,8 +109,8 @@ void EXTI0_IRQHandler(void)
 }
 
 /**
-* @brief This function handles EXTI line1 interrupt.
-*/
+  * @brief This function handles EXTI line1 interrupt.
+  */
 void EXTI1_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI1_IRQn 0 */
@@ -103,8 +123,8 @@ void EXTI1_IRQHandler(void)
 }
 
 /**
-* @brief This function handles EXTI line2 interrupt.
-*/
+  * @brief This function handles EXTI line2 interrupt.
+  */
 void EXTI2_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI2_IRQn 0 */
@@ -117,8 +137,8 @@ void EXTI2_IRQHandler(void)
 }
 
 /**
-* @brief This function handles EXTI line3 interrupt.
-*/
+  * @brief This function handles EXTI line3 interrupt.
+  */
 void EXTI3_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI3_IRQn 0 */
@@ -131,8 +151,8 @@ void EXTI3_IRQHandler(void)
 }
 
 /**
-* @brief This function handles EXTI line4 interrupt.
-*/
+  * @brief This function handles EXTI line4 interrupt.
+  */
 void EXTI4_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI4_IRQn 0 */
@@ -145,8 +165,8 @@ void EXTI4_IRQHandler(void)
 }
 
 /**
-* @brief This function handles DMA1 stream3 global interrupt.
-*/
+  * @brief This function handles DMA1 stream3 global interrupt.
+  */
 void DMA1_Stream3_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA1_Stream3_IRQn 0 */
@@ -159,8 +179,8 @@ void DMA1_Stream3_IRQHandler(void)
 }
 
 /**
-* @brief This function handles EXTI line[9:5] interrupts.
-*/
+  * @brief This function handles EXTI line[9:5] interrupts.
+  */
 void EXTI9_5_IRQHandler(void)
 {
   /* USER CODE BEGIN EXTI9_5_IRQn 0 */
@@ -177,8 +197,8 @@ void EXTI9_5_IRQHandler(void)
 }
 
 /**
-* @brief This function handles TIM1 trigger and commutation interrupts and TIM11 global interrupt.
-*/
+  * @brief This function handles TIM1 trigger and commutation interrupts and TIM11 global interrupt.
+  */
 void TIM1_TRG_COM_TIM11_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM1_TRG_COM_TIM11_IRQn 0 */
@@ -192,8 +212,8 @@ void TIM1_TRG_COM_TIM11_IRQHandler(void)
 }
 
 /**
-* @brief This function handles DMA2 stream4 global interrupt.
-*/
+  * @brief This function handles DMA2 stream4 global interrupt.
+  */
 void DMA2_Stream4_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2_Stream4_IRQn 0 */
@@ -206,8 +226,8 @@ void DMA2_Stream4_IRQHandler(void)
 }
 
 /**
-* @brief This function handles DMA2 stream5 global interrupt.
-*/
+  * @brief This function handles DMA2 stream5 global interrupt.
+  */
 void DMA2_Stream5_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2_Stream5_IRQn 0 */
@@ -220,8 +240,8 @@ void DMA2_Stream5_IRQHandler(void)
 }
 
 /**
-* @brief This function handles USART6 global interrupt.
-*/
+  * @brief This function handles USART6 global interrupt.
+  */
 void USART6_IRQHandler(void)
 {
   /* USER CODE BEGIN USART6_IRQn 0 */
