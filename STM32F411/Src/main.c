@@ -56,8 +56,6 @@ DMA_HandleTypeDef hdma_tim4_ch2;
 
 UART_HandleTypeDef huart6;
 
-PCD_HandleTypeDef hpcd_USB_OTG_FS;
-
 osThreadId defaultTaskHandle;
 osThreadId sensorTaskHandle;
 osThreadId controlTaskHandle;
@@ -165,7 +163,6 @@ static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM5_Init(void);
 static void MX_I2C3_Init(void);
-static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM9_Init(void);
 static void MX_TIM10_Init(void);
 static void MX_SPI5_Init(void);
@@ -235,7 +232,6 @@ int main(void)
   MX_TIM4_Init();
   MX_TIM5_Init();
   MX_I2C3_Init();
-  MX_USB_OTG_FS_PCD_Init();
   MX_TIM9_Init();
   MX_TIM10_Init();
   MX_SPI5_Init();
@@ -275,13 +271,13 @@ int main(void)
   HAL_TIM_Base_Start(&htim10);
   
   // Test code START
-  TIM1->CCR1 = 30*4800/100; //LEFT1
-  TIM1->CCR2 = 30*4800/100; //LEFT2
-  TIM1->CCR3 = 30*4800/100; //LEFT3
-  TIM1->CCR4 = 30*4800/100; //RIGHT1
-  TIM2->CCR1 = 30*4800/100; //RIGHT2
-  TIM2->CCR3 = 30*4800/100; //RIGHT3
-  
+  TIM1->CCR1 = 40*4800/100; //LEFT1
+  TIM1->CCR2 = 40*4800/100; //LEFT2
+  TIM1->CCR3 = 40*4800/100; //LEFT3
+  TIM1->CCR4 = 40*4800/100; //RIGHT1
+  TIM2->CCR1 = 40*4800/100; //RIGHT2
+  TIM2->CCR3 = 40*4800/100; //RIGHT3
+ 
   TIM3->CCR1 = 5*20000/100; //SERVO1 - L1
   TIM3->CCR2 = 5*20000/100; //SERVO2 - L2
   TIM3->CCR3 = 5*20000/100; //SERVO3 - L3
@@ -1031,42 +1027,6 @@ static void MX_USART6_UART_Init(void)
   /* USER CODE BEGIN USART6_Init 2 */
 
   /* USER CODE END USART6_Init 2 */
-
-}
-
-/**
-  * @brief USB_OTG_FS Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USB_OTG_FS_PCD_Init(void)
-{
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 0 */
-
-  /* USER CODE END USB_OTG_FS_Init 0 */
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 1 */
-
-  /* USER CODE END USB_OTG_FS_Init 1 */
-  hpcd_USB_OTG_FS.Instance = USB_OTG_FS;
-  hpcd_USB_OTG_FS.Init.dev_endpoints = 4;
-  hpcd_USB_OTG_FS.Init.speed = PCD_SPEED_FULL;
-  hpcd_USB_OTG_FS.Init.dma_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.ep0_mps = DEP0CTL_MPS_64;
-  hpcd_USB_OTG_FS.Init.phy_itface = PCD_PHY_EMBEDDED;
-  hpcd_USB_OTG_FS.Init.Sof_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.low_power_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.lpm_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.vbus_sensing_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.use_dedicated_ep1 = DISABLE;
-  if (HAL_PCD_Init(&hpcd_USB_OTG_FS) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USB_OTG_FS_Init 2 */
-
-  /* USER CODE END USB_OTG_FS_Init 2 */
 
 }
 
