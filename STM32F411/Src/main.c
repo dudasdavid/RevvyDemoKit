@@ -1605,7 +1605,7 @@ void StartControlTask(void const * argument)
   for(;;)
   {
     
-    reqSpeedLeft = referenceSpeedLeft;
+    reqSpeedLeft = -referenceSpeedLeft;
     reqSpeedRight = referenceSpeedRight;
     
     if (reqSpeedLeft > currSpeedLeft){
@@ -1852,9 +1852,10 @@ void StartLedTask(void const * argument)
 {
   /* USER CODE BEGIN StartLedTask */
   uint8_t cycleCounter=0;
-  uint8_t bluetoothBlinkCounter = 0;
-  uint8_t battery1BlinkCounter = 0;
-  uint8_t battery2BlinkCounter = 0;
+  uint32_t roundCounter = 0;
+  int8_t bluetoothBlinkCounter = 0;
+  int8_t battery1BlinkCounter = 0;
+  int8_t battery2BlinkCounter = 0;
   
   float voltageFullRange_Mot = NORMALVOLTAGE_MOT - LOWVOLTAGE_MOT;
   float voltageFullRange_Logic = NORMALVOLTAGE_LOGIC - LOWVOLTAGE_LOGIC;
@@ -1874,12 +1875,25 @@ void StartLedTask(void const * argument)
     cycleCounter++;
     HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
     
+    if ((sen1AnalogValue < 100) && (sen2AnalogValue < 100) && (sen3AnalogValue < 100) && (sen4AnalogValue < 100)){
+      WS2812_All_RGB((WS2812_RGB_t){0,0,0},0);
+      WS2812_One_RGB(((roundCounter%12)+4),(WS2812_RGB_t){0,0,10},0);
+      roundCounter++;
+      WS2812_Revvy_Shift_Right(0);
+      
+    }
+    else {
+      WS2812_All_RGB((WS2812_RGB_t){10,0,0},0);
+    }
+    
+    
+    
     WS2812_One_RGB(0,(WS2812_RGB_t){30,30,30},0);
 
     if ((timeOutGuard) > 1000){
-      if (bluetoothBlinkCounter == 0) WS2812_One_RGB(1,(WS2812_RGB_t){0,0,30},0);
-      else if (bluetoothBlinkCounter == 3) WS2812_One_RGB(1,(WS2812_RGB_t){0,0,0},0);
-      else if (bluetoothBlinkCounter == 6) bluetoothBlinkCounter = -1;
+      if ((bluetoothBlinkCounter >= 0) && (bluetoothBlinkCounter < 3)) WS2812_One_RGB(1,(WS2812_RGB_t){0,0,30},0);
+      else if ((bluetoothBlinkCounter >= 3) && (bluetoothBlinkCounter < 7)) WS2812_One_RGB(1,(WS2812_RGB_t){0,0,0},0);
+      if (bluetoothBlinkCounter == 6) bluetoothBlinkCounter = -1;
       bluetoothBlinkCounter++;
     }
     else{
@@ -1924,9 +1938,7 @@ void StartLedTask(void const * argument)
       WS2812_One_RGB(3,(WS2812_RGB_t){30,30,30},0);
     }
     
-
-    WS2812_Revvy_Shift_Right(1);
-    //WS2812_One_RGB(0,(WS2812_RGB_t){10,0,0},1);
+    WS2812_Refresh();
     HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
 
   }
