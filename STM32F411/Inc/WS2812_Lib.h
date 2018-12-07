@@ -56,3 +56,5 @@ void WS2812_Shift_Left(uint8_t refresh);
 void WS2812_Shift_Right(uint8_t refresh);
 void WS2812_Rotate_Left(uint8_t refresh);
 void WS2812_Rotate_Right(uint8_t refresh);
+void WS2812_Revvy_Shift_Right(uint8_t refresh);
+void WS2812_Revvy_Shift_Left(uint8_t refresh);

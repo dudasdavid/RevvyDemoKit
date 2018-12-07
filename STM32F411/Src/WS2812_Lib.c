@@ -436,3 +436,38 @@ void WS2812_Rotate_Right(uint8_t refresh)
 #endif
 }
 
+void WS2812_Revvy_Shift_Right(uint8_t refresh)
+{
+#if (WS2812_NUM_LEDS_CH1 > 5)
+    WS2812_RGB_t temp = WS2812_LED_BUF_CH1[WS2812_NUM_LEDS_CH1 - 1];
+    for (uint32_t n = WS2812_NUM_LEDS_CH1 - 1; n > 4; n--)
+    {
+        WS2812_LED_BUF_CH1[n] = WS2812_LED_BUF_CH1[n - 1];
+    }
+    WS2812_LED_BUF_CH1[4] = temp;
+
+    if (refresh == 1)
+    {
+        WS2812_Refresh();
+    }
+#endif
+}
+
+void WS2812_Revvy_Shift_Left(uint8_t refresh)
+{
+#if (WS2812_NUM_LEDS_CH1 > 5)
+    WS2812_RGB_t temp = WS2812_LED_BUF_CH1[4];
+    for (uint32_t n = 5; n < WS2812_NUM_LEDS_CH1; n++)
+    {
+        WS2812_LED_BUF_CH1[n - 1] = WS2812_LED_BUF_CH1[n];
+    }
+    WS2812_LED_BUF_CH1[WS2812_NUM_LEDS_CH1 - 1] = temp;
+
+    if (refresh == 1)
+    {
+        WS2812_Refresh();
+    }
+#endif
+}
+
+

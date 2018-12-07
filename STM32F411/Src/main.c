@@ -13,6 +13,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <math.h>
+#include <stdlib.h>
 #include "WS2812_Lib.h"
 #include "stm32f411e_discovery.h"
 #include "stm32f411e_discovery_accelerometer.h"
@@ -74,6 +75,12 @@ osThreadId ledTaskHandle;
 #define COMPASS_Z_MAX 845
 #define COMPASS_Z_MIN -282
 
+#define NORMALVOLTAGE_MOT 1.4
+#define LOWVOLTAGE_MOT 1.18
+
+#define NORMALVOLTAGE_LOGIC 1.1
+#define LOWVOLTAGE_LOGIC 0.8
+
 static volatile uint32_t ADC_Buf[6];
 static volatile uint32_t ADC_Values[6];
 
@@ -94,10 +101,10 @@ static volatile uint32_t sen1Cntr, sen1Start, sen1End, sen1Length = 0; //Sensors
 static volatile uint32_t sen2Cntr, sen2Start, sen2End, sen2Length = 0; //Sensors
 static volatile uint32_t sen3Cntr, sen3Start, sen3End, sen3Length = 0; //Sensors
 static volatile uint32_t sen4Cntr, sen4Start, sen4End, sen4Length = 0; //Sensors
-static volatile float sen1Distance = 0;
-static volatile float sen2Distance = 0;
-static volatile float sen3Distance = 0;
-static volatile float sen4Distance = 0;
+static volatile float sen1Distance, sen1DistanceFiltered = 0;
+static volatile float sen2Distance, sen2DistanceFiltered = 0;
+static volatile float sen3Distance, sen3DistanceFiltered = 0;
+static volatile float sen4Distance, sen4DistanceFiltered = 0;
 
 static volatile float batteryVoltage1 = 0;
 static volatile float batteryVoltage2 = 0;
@@ -128,12 +135,12 @@ static volatile float wheelR1Angle_deg = 0;
 static volatile float wheelR2Angle_deg = 0;
 static volatile float wheelR3Angle_deg = 0;
 
-static volatile float wheelL1RawVelocity_mps, wheelL1FiltVelocity_mps = 0;
-static volatile float wheelL2RawVelocity_mps, wheelL2FiltVelocity_mps = 0;
-static volatile float wheelL3RawVelocity_mps, wheelL3FiltVelocity_mps = 0;
-static volatile float wheelR1RawVelocity_mps, wheelR1FiltVelocity_mps = 0;
-static volatile float wheelR2RawVelocity_mps, wheelR2FiltVelocity_mps = 0;
-static volatile float wheelR3RawVelocity_mps, wheelR3FiltVelocity_mps = 0;
+static volatile float wheelL1RawVelocity_mps, wheelL1FiltVelocity_mps, wheelL1FiltVelocity_rpm = 0;
+static volatile float wheelL2RawVelocity_mps, wheelL2FiltVelocity_mps, wheelL2FiltVelocity_rpm = 0;
+static volatile float wheelL3RawVelocity_mps, wheelL3FiltVelocity_mps, wheelL3FiltVelocity_rpm = 0;
+static volatile float wheelR1RawVelocity_mps, wheelR1FiltVelocity_mps, wheelR1FiltVelocity_rpm = 0;
+static volatile float wheelR2RawVelocity_mps, wheelR2FiltVelocity_mps, wheelR2FiltVelocity_rpm = 0;
+static volatile float wheelR3RawVelocity_mps, wheelR3FiltVelocity_mps, wheelR3FiltVelocity_rpm = 0;
 
 static volatile float wheelSize_m = 0.20; // 20cm circumference
 static volatile uint16_t encoderSignalsPerRound = 360; // 3 counts per motor round and a 120:1 gearbox
@@ -143,10 +150,33 @@ static volatile float referenceSpeedLeft = 0;
 static volatile float referenceSpeedRight = 0;
 
 static volatile uint32_t timeStamp =0;
-static volatile uint32_t timeOutGuard =0;
-static uint8_t receiveBuffer[3]={0};
+static volatile uint32_t timeOutGuard, timeOutGuardMax =0;
+static uint8_t receiveBuffer[10]={0};
 static volatile float referenceSpeed = 0;
 static volatile float referenceAngle = 0;
+static uint8_t messageCounter, messageCounterPrev = 0;
+static volatile uint8_t buttonState = 0;
+
+static volatile float nextSpeedLeft, nextSpeedRight = 0;
+static volatile float reqSpeedLeft, reqSpeedRight, currSpeedLeft, currSpeedRight = 0;
+static volatile float speedRampRate = 0.05;
+
+static volatile float wheelL1VelocityError, wheelL1VelocityErrorBefore, wheelL1VelocityIntError, wheelL1VelocityDerivatedError, wheelL1SumControl, wheelL1SumControlBeforeSaturation = 0;
+static volatile float wheelL2VelocityError, wheelL2VelocityErrorBefore, wheelL2VelocityIntError, wheelL2VelocityDerivatedError, wheelL2SumControl, wheelL2SumControlBeforeSaturation = 0;
+static volatile float wheelL3VelocityError, wheelL3VelocityErrorBefore, wheelL3VelocityIntError, wheelL3VelocityDerivatedError, wheelL3SumControl, wheelL3SumControlBeforeSaturation = 0;
+static volatile float wheelR1VelocityError, wheelR1VelocityErrorBefore, wheelR1VelocityIntError, wheelR1VelocityDerivatedError, wheelR1SumControl, wheelR1SumControlBeforeSaturation = 0;
+static volatile float wheelR2VelocityError, wheelR2VelocityErrorBefore, wheelR2VelocityIntError, wheelR2VelocityDerivatedError, wheelR2SumControl, wheelR2SumControlBeforeSaturation = 0;
+static volatile float wheelR3VelocityError, wheelR3VelocityErrorBefore, wheelR3VelocityIntError, wheelR3VelocityDerivatedError, wheelR3SumControl, wheelR3SumControlBeforeSaturation = 0;
+
+static volatile float maxDutyCycle = 100;
+static volatile float antiWindup = 0.004;
+static volatile float ctrlP = 750;
+static volatile float ctrlI = 10;
+static volatile float ctrlD = 0;
+
+static volatile float positionErrorL3_deg = 0;
+static volatile float referenceAngleL3_deg = 0;
+static volatile float ctrlP_pos = 0.01;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -271,12 +301,12 @@ int main(void)
   HAL_TIM_Base_Start(&htim10);
   
   // Test code START
-  TIM1->CCR1 = 40*4800/100; //LEFT1
-  TIM1->CCR2 = 40*4800/100; //LEFT2
-  TIM1->CCR3 = 40*4800/100; //LEFT3
-  TIM1->CCR4 = 40*4800/100; //RIGHT1
-  TIM2->CCR1 = 40*4800/100; //RIGHT2
-  TIM2->CCR3 = 40*4800/100; //RIGHT3
+  TIM1->CCR1 = 00*4800/100; //LEFT1
+  TIM1->CCR2 = 00*4800/100; //LEFT2
+  TIM1->CCR3 = 00*4800/100; //LEFT3
+  TIM1->CCR4 = 00*4800/100; //RIGHT1
+  TIM2->CCR1 = 00*4800/100; //RIGHT2
+  TIM2->CCR3 = 00*4800/100; //RIGHT3
  
   TIM3->CCR1 = 5*20000/100; //SERVO1 - L1
   TIM3->CCR2 = 5*20000/100; //SERVO2 - L2
@@ -1175,28 +1205,28 @@ static void MX_GPIO_Init(void)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
   switch ( GPIO_Pin ) {
   case GPIO_PIN_0:
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12)) mot1Cntr--;
-    else mot1Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12)) mot1Cntr++;
+    else mot1Cntr--;
     break;
   case GPIO_PIN_1:
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_13)) mot2Cntr--;
-    else mot2Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_13)) mot2Cntr++;
+    else mot2Cntr--;
     break;
   case GPIO_PIN_2:
-    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_14)) mot3Cntr--;
-    else mot3Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_14)) mot3Cntr++;
+    else mot3Cntr--;
     break;
   case GPIO_PIN_3:
-    if (HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_7)) mot4Cntr--;
-    else mot4Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_7)) mot4Cntr++;
+    else mot4Cntr--;
     break;
   case GPIO_PIN_4:
-    if (HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_8)) mot5Cntr--;
-    else mot5Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_8)) mot5Cntr++;
+    else mot5Cntr--;
     break;
   case GPIO_PIN_5:
-    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_10)) mot6Cntr--;
-    else mot6Cntr++;
+    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_10)) mot6Cntr++;
+    else mot6Cntr--;
     break;
   case GPIO_PIN_6:
     sen1Cntr++;
@@ -1283,6 +1313,18 @@ void calculateLRSpeeds(float r, float phi) {
       referenceSpeedRight = -r;
   }
 }
+
+void processButtons(uint8_t buttons){
+  if ((buttons & 0x01) == 0x01){
+    referenceAngleL3_deg += 1;
+  }
+  if ((buttons & 0x04) == 0x04){
+    referenceAngleL3_deg -= 1;
+  }
+  //else{
+  //  //referenceAngleL3_deg = wheelL3Angle_deg;
+  //}
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -1338,8 +1380,14 @@ void StartSensorTask(void const * argument)
     sen2Distance = sen2Length * 0.34/2;
     sen3Distance = sen3Length * 0.34/2;
     sen4Distance = sen4Length * 0.34/2;
-    batteryVoltage1 = ADC_Values[0]*3.0*10/4095; // ToDo adjust gain
-    batteryVoltage2 = ADC_Values[1]*3.0*10/4095; // ToDo adjust gain
+    
+    sen1DistanceFiltered = filter2(sen1DistanceFiltered, sen1Distance, 0.2);
+    sen2DistanceFiltered = filter2(sen2DistanceFiltered, sen2Distance, 0.2);
+    sen3DistanceFiltered = filter2(sen3DistanceFiltered, sen3Distance, 0.2);
+    sen4DistanceFiltered = filter2(sen4DistanceFiltered, sen4Distance, 0.2);
+    
+    batteryVoltage1 = ADC_Values[0]*3.0*10/4095;
+    batteryVoltage2 = ADC_Values[1]*3.0*10/4095;
     sen1AnalogValue = ADC_Values[2];
     sen2AnalogValue = ADC_Values[3];
     sen3AnalogValue = ADC_Values[4];
@@ -1436,6 +1484,13 @@ void StartSensorTask(void const * argument)
     wheelR1FiltVelocity_mps = filter2(wheelR1FiltVelocity_mps, wheelR1RawVelocity_mps, 0.35);
     wheelR2FiltVelocity_mps = filter2(wheelR2FiltVelocity_mps, wheelR2RawVelocity_mps, 0.35);
     wheelR3FiltVelocity_mps = filter2(wheelR3FiltVelocity_mps, wheelR3RawVelocity_mps, 0.35);
+    
+    wheelL1FiltVelocity_rpm = wheelL1FiltVelocity_mps / wheelSize_m * 360 / 6;
+    wheelL2FiltVelocity_rpm = wheelL2FiltVelocity_mps / wheelSize_m * 360 / 6;
+    wheelL3FiltVelocity_rpm = wheelL3FiltVelocity_mps / wheelSize_m * 360 / 6;
+    wheelR1FiltVelocity_rpm = wheelR1FiltVelocity_mps / wheelSize_m * 360 / 6;
+    wheelR2FiltVelocity_rpm = wheelR2FiltVelocity_mps / wheelSize_m * 360 / 6;
+    wheelR3FiltVelocity_rpm = wheelR3FiltVelocity_mps / wheelSize_m * 360 / 6;
     
     wheelL1Odometer_m_prev = wheelL1Odometer_m;
     wheelL2Odometer_m_prev = wheelL2Odometer_m;
@@ -1549,7 +1604,172 @@ void StartControlTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    
+    reqSpeedLeft = referenceSpeedLeft;
+    reqSpeedRight = referenceSpeedRight;
+    
+    if (reqSpeedLeft > currSpeedLeft){
+      if (reqSpeedLeft > currSpeedLeft + speedRampRate){
+        nextSpeedLeft = currSpeedLeft + speedRampRate;
+      }
+      else{
+        nextSpeedLeft = reqSpeedLeft;
+      }
+    }
+    else if (reqSpeedLeft < currSpeedLeft){
+      if (reqSpeedLeft < currSpeedLeft - speedRampRate){
+        nextSpeedLeft = currSpeedLeft - speedRampRate;
+      }
+      else{
+        nextSpeedLeft = reqSpeedLeft;
+      }
+    }
+    
+    if (reqSpeedRight > currSpeedRight){
+      if (reqSpeedRight > currSpeedRight + speedRampRate){
+        nextSpeedRight = currSpeedRight + speedRampRate;
+      }
+      else{
+        nextSpeedRight = reqSpeedRight;
+      }
+    }
+    else if (reqSpeedRight < currSpeedRight){
+      if (reqSpeedRight < currSpeedRight - speedRampRate){
+        nextSpeedRight = currSpeedRight - speedRampRate;
+      }
+      else{
+        nextSpeedRight = reqSpeedRight;
+      }
+    }
+    
+    wheelL1VelocityErrorBefore = wheelL1VelocityError;
+    wheelL1VelocityError = nextSpeedLeft - wheelL1FiltVelocity_mps;
+    wheelL1VelocityIntError = wheelL1VelocityIntError + wheelL1VelocityError + antiWindup * (wheelL1SumControl - wheelL1SumControlBeforeSaturation);
+    wheelL1VelocityDerivatedError = wheelL1VelocityError - wheelL1VelocityErrorBefore;
+    wheelL1SumControl = (int)(ctrlP * wheelL1VelocityError + ctrlI * wheelL1VelocityIntError + ctrlD * wheelL1VelocityDerivatedError);
+    wheelL1SumControlBeforeSaturation = wheelL1SumControl;
+    
+    wheelL2VelocityErrorBefore = wheelL2VelocityError;
+    wheelL2VelocityError = nextSpeedLeft - wheelL2FiltVelocity_mps;
+    wheelL2VelocityIntError = wheelL2VelocityIntError + wheelL2VelocityError + antiWindup * (wheelL2SumControl - wheelL2SumControlBeforeSaturation);
+    wheelL2VelocityDerivatedError = wheelL2VelocityError - wheelL2VelocityErrorBefore;
+    wheelL2SumControl = (int)(ctrlP * wheelL2VelocityError + ctrlI * wheelL2VelocityIntError + ctrlD * wheelL2VelocityDerivatedError);
+    wheelL2SumControlBeforeSaturation = wheelL2SumControl;
+    
+    positionErrorL3_deg = referenceAngleL3_deg - wheelL3Angle_deg;
+    
+    wheelL3VelocityErrorBefore = wheelL3VelocityError;
+    wheelL3VelocityError = (positionErrorL3_deg * ctrlP_pos) - wheelL3FiltVelocity_mps;
+    wheelL3VelocityIntError = wheelL3VelocityIntError + wheelL3VelocityError + antiWindup * (wheelL3SumControl - wheelL3SumControlBeforeSaturation);
+    wheelL3VelocityDerivatedError = wheelL3VelocityError - wheelL3VelocityErrorBefore;
+    wheelL3SumControl = (int)(ctrlP * wheelL3VelocityError + ctrlI * wheelL3VelocityIntError + ctrlD * wheelL3VelocityDerivatedError);
+    wheelL3SumControlBeforeSaturation = wheelL3SumControl;
+    
+    wheelR1VelocityErrorBefore = wheelR1VelocityError;
+    wheelR1VelocityError = nextSpeedRight - wheelR1FiltVelocity_mps;
+    wheelR1VelocityIntError = wheelR1VelocityIntError + wheelR1VelocityError + antiWindup * (wheelR1SumControl - wheelR1SumControlBeforeSaturation);
+    wheelR1VelocityDerivatedError = wheelR1VelocityError - wheelR1VelocityErrorBefore;
+    wheelR1SumControl = (int)(ctrlP * wheelR1VelocityError + ctrlI * wheelR1VelocityIntError + ctrlD * wheelR1VelocityDerivatedError);
+    wheelR1SumControlBeforeSaturation = wheelR1SumControl;
+    
+    wheelR2VelocityErrorBefore = wheelR2VelocityError;
+    wheelR2VelocityError = nextSpeedRight - wheelR2FiltVelocity_mps;
+    wheelR2VelocityIntError = wheelR2VelocityIntError + wheelR2VelocityError + antiWindup * (wheelR2SumControl - wheelR2SumControlBeforeSaturation);
+    wheelR2VelocityDerivatedError = wheelR2VelocityError - wheelR2VelocityErrorBefore;
+    wheelR2SumControl = (int)(ctrlP * wheelR2VelocityError + ctrlI * wheelR2VelocityIntError + ctrlD * wheelR2VelocityDerivatedError);
+    wheelR2SumControlBeforeSaturation = wheelR2SumControl;
+    
+    wheelR3VelocityErrorBefore = wheelR3VelocityError;
+    wheelR3VelocityError = nextSpeedRight - wheelR3FiltVelocity_mps;
+    wheelR3VelocityIntError = wheelR3VelocityIntError + wheelR3VelocityError + antiWindup * (wheelR3SumControl - wheelR3SumControlBeforeSaturation);
+    wheelR3VelocityDerivatedError = wheelR3VelocityError - wheelR3VelocityErrorBefore;
+    wheelR3SumControl = (int)(ctrlP * wheelR3VelocityError + ctrlI * wheelR3VelocityIntError + ctrlD * wheelR3VelocityDerivatedError);
+    wheelR3SumControlBeforeSaturation = wheelR3SumControl;
+    
+    if (fabs(nextSpeedLeft) < 0.01) {
+      wheelL1VelocityIntError -= wheelL1VelocityIntError*0.01;
+      wheelL2VelocityIntError -= wheelL2VelocityIntError*0.01;
+      wheelL3VelocityIntError -= wheelL3VelocityIntError*0.01;
+    }
+    if (fabs(nextSpeedRight) < 0.01) {
+      wheelR1VelocityIntError -= wheelR1VelocityIntError*0.01;
+      wheelR2VelocityIntError -= wheelR2VelocityIntError*0.01;
+      wheelR3VelocityIntError -= wheelR3VelocityIntError*0.01;
+    }
+    
+    saturateVolatileFloat(&wheelL1SumControl, -maxDutyCycle, maxDutyCycle);
+    saturateVolatileFloat(&wheelL2SumControl, -maxDutyCycle, maxDutyCycle);
+    saturateVolatileFloat(&wheelL3SumControl, -maxDutyCycle, maxDutyCycle);
+    saturateVolatileFloat(&wheelR1SumControl, -maxDutyCycle, maxDutyCycle);
+    saturateVolatileFloat(&wheelR2SumControl, -maxDutyCycle, maxDutyCycle);
+    saturateVolatileFloat(&wheelR3SumControl, -maxDutyCycle, maxDutyCycle);
+    
+    if (wheelL1SumControl>=0){
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET); //LEFT1 FW
+      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, GPIO_PIN_RESET); //LEFT1 RW
+    }
+    else {
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET); //LEFT1 FW
+      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, GPIO_PIN_SET); //LEFT1 RW
+    }
+    TIM1->CCR1 = abs((int)wheelL1SumControl)*4800/100; //LEFT1
+    
+    if (wheelL2SumControl>=0){
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET); //LEFT2 FW
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET); //LEFT2 RW
+    }
+    else {
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET); //LEFT2 FW
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_SET); //LEFT2 RW
+    }
+    TIM1->CCR2 = abs((int)wheelL2SumControl)*4800/100; //LEFT2
+    
+    if (wheelL3SumControl>=0){
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET); //LEFT3 FW
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_RESET); //LEFT3 RW
+    }
+    else {
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET); //LEFT3 FW
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_SET); //LEFT3 RW
+    }
+    TIM1->CCR3 = abs((int)wheelL3SumControl)*4800/100; //LEFT3
+    
+    if (wheelR1SumControl>=0){
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6,  GPIO_PIN_SET); //RIGHT1 FW
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7,  GPIO_PIN_RESET); //RIGHT1 RW
+    }
+    else {
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6,  GPIO_PIN_RESET); //RIGHT1 FW
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7,  GPIO_PIN_SET); //RIGHT1 RW
+    }
+    TIM1->CCR4 = abs((int)wheelR1SumControl)*4800/100; //RIGHT1
+    
+    if (wheelR2SumControl>=0){
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9,  GPIO_PIN_SET); //RIGHT2 FW
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); //RIGHT2 RW
+    }
+    else {
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9,  GPIO_PIN_RESET); //RIGHT2 FW
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); //RIGHT2 RW
+    }
+    TIM2->CCR1 = abs((int)wheelR2SumControl)*4800/100; //RIGHT2
+    
+    if (wheelR2SumControl>=0){
+      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET); //RIGHT3 FW
+      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET); //RIGHT3 RW
+    }
+    else {
+      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET); //RIGHT3 FW
+      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET); //RIGHT3 RW
+    }
+    TIM2->CCR3 = abs((int)wheelR3SumControl)*4800/100; //RIGHT3
+    
+    
+    
+    currSpeedLeft = nextSpeedLeft;
+    currSpeedRight = nextSpeedRight;
+    
+    osDelay(20);
   }
   /* USER CODE END StartControlTask */
 }
@@ -1567,22 +1787,34 @@ void StartCommTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-    HAL_UART_Receive_IT(&huart6,receiveBuffer,3);
+    HAL_UART_Receive_IT(&huart6,receiveBuffer,5);
     
     if ((receiveBuffer[0] == 0xFF) && (receiveBuffer[1] <=100) && (receiveBuffer[2] <=180)){
       //referenceSpeedOrig = receiveBuffer[1] / 10.0;
       //referenceSpeed = calcSpdRef_LUT(referenceSpeedOrig);
-      referenceSpeed = receiveBuffer[1] / 25.0;
+      referenceSpeed = receiveBuffer[1] / 667.0;
       referenceAngle = receiveBuffer[2] * 2.0;
       calculateLRSpeeds(referenceSpeed, referenceAngle);
-      timeStamp = HAL_GetTick();
+      buttonState = receiveBuffer[3];
+      processButtons(buttonState);
+      messageCounter = receiveBuffer[4];
+      if (messageCounter != messageCounterPrev){
+        timeStamp = HAL_GetTick();
+        messageCounterPrev = messageCounter;
+      }
     }    
     
     timeOutGuard = HAL_GetTick() - timeStamp;
+    if (timeOutGuard > timeOutGuardMax){
+      timeOutGuardMax = timeOutGuard;
+    }
     
-    if ((timeOutGuard) > 3000){
+    if ((timeOutGuard) > 1000){
       referenceSpeed = 0;
       referenceAngle = 0;
+      calculateLRSpeeds(referenceSpeed, referenceAngle);
+      buttonState = 0;
+      processButtons(buttonState);
     }
     
     osDelay(20);
@@ -1619,15 +1851,81 @@ void StartIdleTask(void const * argument)
 void StartLedTask(void const * argument)
 {
   /* USER CODE BEGIN StartLedTask */
+  uint8_t cycleCounter=0;
+  uint8_t bluetoothBlinkCounter = 0;
+  uint8_t battery1BlinkCounter = 0;
+  uint8_t battery2BlinkCounter = 0;
+  
+  float voltageFullRange_Mot = NORMALVOLTAGE_MOT - LOWVOLTAGE_MOT;
+  float voltageFullRange_Logic = NORMALVOLTAGE_LOGIC - LOWVOLTAGE_LOGIC;
+  float voltageInRange = 0;
+  float voltageRatio = 0;
+  float cellVoltage = 0;
+  
   WS2812_One_RGB(0,(WS2812_RGB_t){0,10,0},0);
   WS2812_One_RGB(1,(WS2812_RGB_t){10,10,10},0);
   WS2812_One_RGB(2,(WS2812_RGB_t){10,0,0},0);
+  WS2812_One_RGB(3,(WS2812_RGB_t){10,10,0},0);
+  WS2812_One_RGB(4,(WS2812_RGB_t){0,0,10},1);
   /* Infinite loop */
   for(;;)
   {
     osDelay(150);
+    cycleCounter++;
     HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
-    WS2812_Rotate_Left(1);
+    
+    WS2812_One_RGB(0,(WS2812_RGB_t){30,30,30},0);
+
+    if ((timeOutGuard) > 1000){
+      if (bluetoothBlinkCounter == 0) WS2812_One_RGB(1,(WS2812_RGB_t){0,0,30},0);
+      else if (bluetoothBlinkCounter == 3) WS2812_One_RGB(1,(WS2812_RGB_t){0,0,0},0);
+      else if (bluetoothBlinkCounter == 6) bluetoothBlinkCounter = -1;
+      bluetoothBlinkCounter++;
+    }
+    else{
+      WS2812_One_RGB(1,(WS2812_RGB_t){0,0,30},0);
+    }
+    
+    cellVoltage = batteryVoltage1 / 4;
+    if (cellVoltage >= NORMALVOLTAGE_LOGIC){
+      WS2812_One_RGB(2,(WS2812_RGB_t){0,30,0},0);
+    }
+    else if ((cellVoltage < NORMALVOLTAGE_LOGIC) && (cellVoltage >= LOWVOLTAGE_LOGIC)){
+      voltageInRange = cellVoltage - LOWVOLTAGE_LOGIC;
+      voltageRatio = voltageInRange / voltageFullRange_Logic;
+      WS2812_One_RGB(2,(WS2812_RGB_t){(int)(30*(1-voltageRatio)),(int)(30*(voltageRatio)),0},0);
+    }
+    else if (cellVoltage < LOWVOLTAGE_LOGIC){
+      if (battery1BlinkCounter == 0) WS2812_One_RGB(2,(WS2812_RGB_t){30,0,0},0);
+      else if (battery1BlinkCounter == 2) WS2812_One_RGB(2,(WS2812_RGB_t){0,0,0},0);
+      else if (battery1BlinkCounter == 4) battery1BlinkCounter = -1;
+      battery1BlinkCounter++;
+    }
+    else {
+      WS2812_One_RGB(2,(WS2812_RGB_t){30,30,30},0);
+    }
+    
+    cellVoltage = batteryVoltage2 / 4;
+    if (cellVoltage >= NORMALVOLTAGE_MOT){
+      WS2812_One_RGB(3,(WS2812_RGB_t){0,30,0},0);
+    }
+    else if ((cellVoltage < NORMALVOLTAGE_MOT) && (cellVoltage >= LOWVOLTAGE_MOT)){
+      voltageInRange = cellVoltage - LOWVOLTAGE_MOT;
+      voltageRatio = voltageInRange / voltageFullRange_Mot;
+      WS2812_One_RGB(3,(WS2812_RGB_t){(int)(30*(1-voltageRatio)),(int)(30*(voltageRatio)),0},0);
+    }
+    else if (cellVoltage < LOWVOLTAGE_MOT){
+      if (battery2BlinkCounter == 0) WS2812_One_RGB(3,(WS2812_RGB_t){30,0,0},0);
+      else if (battery2BlinkCounter == 2) WS2812_One_RGB(3,(WS2812_RGB_t){0,0,0},0);
+      else if (battery2BlinkCounter == 4) battery2BlinkCounter = -1;
+      battery2BlinkCounter++;
+    }
+    else {
+      WS2812_One_RGB(3,(WS2812_RGB_t){30,30,30},0);
+    }
+    
+
+    WS2812_Revvy_Shift_Right(1);
     //WS2812_One_RGB(0,(WS2812_RGB_t){10,0,0},1);
     HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
 
