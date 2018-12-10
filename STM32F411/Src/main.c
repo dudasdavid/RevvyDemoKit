@@ -63,6 +63,7 @@ osThreadId controlTaskHandle;
 osThreadId commTaskHandle;
 osThreadId idleTaskHandle;
 osThreadId ledTaskHandle;
+osThreadId applicationTaskHandle;
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 #define ABS(x)         (x < 0) ? (-x) : x
@@ -101,10 +102,15 @@ static volatile uint32_t sen1Cntr, sen1Start, sen1End, sen1Length = 0; //Sensors
 static volatile uint32_t sen2Cntr, sen2Start, sen2End, sen2Length = 0; //Sensors
 static volatile uint32_t sen3Cntr, sen3Start, sen3End, sen3Length = 0; //Sensors
 static volatile uint32_t sen4Cntr, sen4Start, sen4End, sen4Length = 0; //Sensors
-static volatile float sen1Distance, sen1DistanceFiltered = 0;
-static volatile float sen2Distance, sen2DistanceFiltered = 0;
-static volatile float sen3Distance, sen3DistanceFiltered = 0;
-static volatile float sen4Distance, sen4DistanceFiltered = 0;
+static volatile float sen1Distance, sen1DistanceFiltered, sen1DistancePrev = 0;
+static volatile float sen2Distance, sen2DistanceFiltered, sen2DistancePrev = 0;
+static volatile float sen3Distance, sen3DistanceFiltered, sen3DistancePrev = 0;
+static volatile float sen4Distance, sen4DistanceFiltered, sen4DistancePrev = 0;
+
+static volatile uint16_t sen1DebounceCounter = 1000;
+static volatile uint16_t sen2DebounceCounter = 1000;
+static volatile uint16_t sen3DebounceCounter = 1000;
+static volatile uint16_t sen4DebounceCounter = 1000;
 
 static volatile float batteryVoltage1 = 0;
 static volatile float batteryVoltage2 = 0;
@@ -177,6 +183,11 @@ static volatile float ctrlD = 0;
 static volatile float positionErrorL3_deg = 0;
 static volatile float referenceAngleL3_deg = 0;
 static volatile float ctrlP_pos = 0.01;
+
+static volatile uint16_t ultrasonicDebounceLimit = 50;
+static volatile uint8_t ultrasonicActive = 0;
+static volatile uint8_t bumperActive = 0;
+static volatile uint8_t autonomousActive = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -202,6 +213,7 @@ void StartControlTask(void const * argument);
 void StartCommTask(void const * argument);
 void StartIdleTask(void const * argument);
 void StartLedTask(void const * argument);
+void StartApplicationTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
@@ -376,6 +388,10 @@ int main(void)
   /* definition and creation of ledTask */
   osThreadDef(ledTask, StartLedTask, osPriorityNormal, 0, 128);
   ledTaskHandle = osThreadCreate(osThread(ledTask), NULL);
+
+  /* definition and creation of applicationTask */
+  osThreadDef(applicationTask, StartApplicationTask, osPriorityNormal, 0, 128);
+  applicationTaskHandle = osThreadCreate(osThread(applicationTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1321,6 +1337,14 @@ void processButtons(uint8_t buttons){
   if ((buttons & 0x04) == 0x04){
     referenceAngleL3_deg -= 1;
   }
+  
+  if ((buttons & 0x10) == 0x10){
+    autonomousActive = 1;
+  }
+  else {
+    autonomousActive = 0;
+  }
+
   //else{
   //  //referenceAngleL3_deg = wheelL3Angle_deg;
   //}
@@ -1380,6 +1404,44 @@ void StartSensorTask(void const * argument)
     sen2Distance = sen2Length * 0.34/2;
     sen3Distance = sen3Length * 0.34/2;
     sen4Distance = sen4Length * 0.34/2;
+    
+    if (sen1Distance == sen1DistancePrev){
+      sen1DebounceCounter++;
+      if (sen1DebounceCounter > 1000) sen1DebounceCounter = 1000;
+    }
+    else {
+      sen1DebounceCounter = 0;
+    }
+    
+    if (sen2Distance == sen2DistancePrev){
+      sen2DebounceCounter++;
+      if (sen2DebounceCounter > 1000) sen2DebounceCounter = 1000;
+    }
+    else {
+      sen2DebounceCounter = 0;
+    }
+    
+    if (sen3Distance == sen3DistancePrev){
+      sen3DebounceCounter++;
+      if (sen3DebounceCounter > 1000) sen3DebounceCounter = 1000;
+    }
+    else {
+      sen3DebounceCounter = 0;
+    }
+    
+    if (sen4Distance == sen4DistancePrev){
+      sen4DebounceCounter++;
+      if (sen4DebounceCounter > 1000) sen4DebounceCounter = 1000;
+    }
+    else {
+      sen4DebounceCounter = 0;
+    }
+    
+    
+    sen1DistancePrev = sen1Distance;
+    sen2DistancePrev = sen2Distance;
+    sen3DistancePrev = sen3Distance;
+    sen4DistancePrev = sen4Distance;
     
     sen1DistanceFiltered = filter2(sen1DistanceFiltered, sen1Distance, 0.2);
     sen2DistanceFiltered = filter2(sen2DistanceFiltered, sen2Distance, 0.2);
@@ -1794,9 +1856,7 @@ void StartCommTask(void const * argument)
       //referenceSpeed = calcSpdRef_LUT(referenceSpeedOrig);
       referenceSpeed = receiveBuffer[1] / 667.0;
       referenceAngle = receiveBuffer[2] * 2.0;
-      calculateLRSpeeds(referenceSpeed, referenceAngle);
       buttonState = receiveBuffer[3];
-      processButtons(buttonState);
       messageCounter = receiveBuffer[4];
       if (messageCounter != messageCounterPrev){
         timeStamp = HAL_GetTick();
@@ -1812,9 +1872,7 @@ void StartCommTask(void const * argument)
     if ((timeOutGuard) > 1000){
       referenceSpeed = 0;
       referenceAngle = 0;
-      calculateLRSpeeds(referenceSpeed, referenceAngle);
       buttonState = 0;
-      processButtons(buttonState);
     }
     
     osDelay(20);
@@ -1875,15 +1933,17 @@ void StartLedTask(void const * argument)
     cycleCounter++;
     HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
     
-    if ((sen1AnalogValue < 100) && (sen2AnalogValue < 100) && (sen3AnalogValue < 100) && (sen4AnalogValue < 100)){
+    if (bumperActive){
+      WS2812_All_RGB((WS2812_RGB_t){10,0,0},0);
+    }
+    else if (ultrasonicActive){
+      WS2812_All_RGB((WS2812_RGB_t){0,10,0},0);
+    }
+    else {
       WS2812_All_RGB((WS2812_RGB_t){0,0,0},0);
       WS2812_One_RGB(((roundCounter%12)+4),(WS2812_RGB_t){0,0,10},0);
       roundCounter++;
       WS2812_Revvy_Shift_Right(0);
-      
-    }
-    else {
-      WS2812_All_RGB((WS2812_RGB_t){10,0,0},0);
     }
     
     
@@ -1943,6 +2003,51 @@ void StartLedTask(void const * argument)
 
   }
   /* USER CODE END StartLedTask */
+}
+
+/* USER CODE BEGIN Header_StartApplicationTask */
+/**
+* @brief Function implementing the applicationTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartApplicationTask */
+void StartApplicationTask(void const * argument)
+{
+  /* USER CODE BEGIN StartApplicationTask */
+  /* Infinite loop */
+  for(;;)
+  {
+    if (autonomousActive){
+      referenceAngle = 90;
+      referenceSpeed = 0.08;
+    }
+    
+    if (((sen1DistanceFiltered < 20) && (sen1DebounceCounter < ultrasonicDebounceLimit)) || ((sen2DistanceFiltered < 20) && (sen2DebounceCounter < ultrasonicDebounceLimit)) || ((sen3DistanceFiltered < 20) && (sen3DebounceCounter < ultrasonicDebounceLimit)) || ((sen4DistanceFiltered < 20) && (sen4DebounceCounter < ultrasonicDebounceLimit))){
+      ultrasonicActive = 1;
+      referenceAngle = 180;
+      referenceSpeed = 0.1;
+    }
+    else {
+      ultrasonicActive = 0;
+    }
+    
+    
+    if ((sen1AnalogValue > 100) || (sen2AnalogValue > 100) || (sen3AnalogValue > 100) || (sen4AnalogValue > 100)){
+      bumperActive = 1;
+      referenceAngle = 90;
+      referenceSpeed = 0.05;
+    }
+    else {
+      bumperActive = 0;
+    }
+    
+    calculateLRSpeeds(referenceSpeed, referenceAngle);
+    processButtons(buttonState);
+    
+    osDelay(10);
+  }
+  /* USER CODE END StartApplicationTask */
 }
 
 /**
