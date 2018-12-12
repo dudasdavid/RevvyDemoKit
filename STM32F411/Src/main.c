@@ -17,6 +17,8 @@
 #include "WS2812_Lib.h"
 #include "stm32f411e_discovery.h"
 #include "stm32f411e_discovery_accelerometer.h"
+#include "FreeRTOS.h"
+#include "task.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,8 +67,7 @@ osThreadId idleTaskHandle;
 osThreadId ledTaskHandle;
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-#define ABS(x)         (x < 0) ? (-x) : x
-#define PI     3.14159
+#define ABS(x)         (((x) < 0) ? (-(x)) : (x))
 
 #define COMPASS_X_MAX 702
 #define COMPASS_X_MIN -358
@@ -97,14 +98,62 @@ static volatile uint8_t mot4Dir = 0; //R1
 static volatile uint8_t mot5Dir = 0; //R2
 static volatile uint8_t mot6Dir = 0; //R3
 
-static volatile uint32_t sen1Cntr, sen1Start, sen1End, sen1Length = 0; //Sensors
-static volatile uint32_t sen2Cntr, sen2Start, sen2End, sen2Length = 0; //Sensors
-static volatile uint32_t sen3Cntr, sen3Start, sen3End, sen3Length = 0; //Sensors
-static volatile uint32_t sen4Cntr, sen4Start, sen4End, sen4Length = 0; //Sensors
-static volatile float sen1Distance, sen1DistanceFiltered = 0;
-static volatile float sen2Distance, sen2DistanceFiltered = 0;
-static volatile float sen3Distance, sen3DistanceFiltered = 0;
-static volatile float sen4Distance, sen4DistanceFiltered = 0;
+typedef struct
+{
+    const GPIO_TypeDef* controlPort;
+    const uint16_t controlPin;
+
+    const GPIO_TypeDef* sensePort;
+    const uint16_t sensePin;
+
+    uint32_t counter;
+    uint32_t start;
+    uint32_t end;
+    uint32_t length;
+
+    float rawDistance;
+    float filteredDistance;
+} Ultrasound_t;
+
+#define DEFINE_ULTRASOUND(ctrlPort, ctrlPin) \
+{                                                               \
+    .controlPort = GPIO ## ctrlPort,                            \
+    .controlPin  = GPIO_PIN_ ## ctrlPin,                        \
+    .counter = 0u,                                              \
+    .start = 0u,                                                \
+    .end = 0u,                                                  \
+    .length = 0u,                                               \
+    .rawDistance = 0.0f,                                        \
+    .filteredDistance = 0.0f                                    \
+}
+
+static Ultrasound_t sensors[4] =
+{
+    DEFINE_ULTRASOUND(A, 4),
+    DEFINE_ULTRASOUND(A, 5),
+    DEFINE_ULTRASOUND(C, 4),
+    DEFINE_ULTRASOUND(C, 5)
+};
+
+static void ultrasound_onSenseStart(Ultrasound_t* sensor, uint32_t counter)
+{
+    sensor->counter++;
+    sensor->start = counter;
+}
+
+static void ultrasound_onSenseEnd(Ultrasound_t* sensor, uint32_t counter)
+{
+    sensor->counter++;
+    sensor->end = counter;
+    if (counter > sensor->start)
+    {
+        sensor->length = counter - sensor->start;
+    }
+    else
+    {
+        sensor->length = (counter + 65536u) - sensor->start;
+    }
+}
 
 static volatile float batteryVoltage1 = 0;
 static volatile float batteryVoltage2 = 0;
@@ -142,9 +191,11 @@ static volatile float wheelR1RawVelocity_mps, wheelR1FiltVelocity_mps, wheelR1Fi
 static volatile float wheelR2RawVelocity_mps, wheelR2FiltVelocity_mps, wheelR2FiltVelocity_rpm = 0;
 static volatile float wheelR3RawVelocity_mps, wheelR3FiltVelocity_mps, wheelR3FiltVelocity_rpm = 0;
 
-static volatile float wheelSize_m = 0.20; // 20cm circumference
+static volatile float wheelSize_m = 0.20f; // 20cm circumference [m]
 static volatile uint16_t encoderSignalsPerRound = 360; // 3 counts per motor round and a 120:1 gearbox
 static volatile uint16_t speedSensingTaskCycle_ms = 10; // 10ms task cycle time
+static volatile float distancePerImpulse = 0.20f / 360; // wheelSize_m / encoderSignalsPerRound, [m / tick]
+static volatile float anglePerImpulse = 360 / 360; // 360 / encoderSignalsPerRound, [° / tick]
 
 static volatile float referenceSpeedLeft = 0;
 static volatile float referenceSpeedRight = 0;
@@ -301,12 +352,12 @@ int main(void)
   HAL_TIM_Base_Start(&htim10);
   
   // Test code START
-  TIM1->CCR1 = 00*4800/100; //LEFT1
-  TIM1->CCR2 = 00*4800/100; //LEFT2
-  TIM1->CCR3 = 00*4800/100; //LEFT3
-  TIM1->CCR4 = 00*4800/100; //RIGHT1
-  TIM2->CCR1 = 00*4800/100; //RIGHT2
-  TIM2->CCR3 = 00*4800/100; //RIGHT3
+  TIM1->CCR1 = 0*4800/100; //LEFT1
+  TIM1->CCR2 = 0*4800/100; //LEFT2
+  TIM1->CCR3 = 0*4800/100; //LEFT3
+  TIM1->CCR4 = 0*4800/100; //RIGHT1
+  TIM2->CCR1 = 0*4800/100; //RIGHT2
+  TIM2->CCR3 = 0*4800/100; //RIGHT3
  
   TIM3->CCR1 = 5*20000/100; //SERVO1 - L1
   TIM3->CCR2 = 5*20000/100; //SERVO2 - L2
@@ -1229,40 +1280,44 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
     else mot6Cntr--;
     break;
   case GPIO_PIN_6:
-    sen1Cntr++;
-    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_6)) sen1Start = TIM10->CNT;
-    else {
-      sen1End = TIM10->CNT;
-      if (sen1End > sen1Start) sen1Length = sen1End-sen1Start;
-      else sen1Length = (sen1End+65535)-sen1Start;
+    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_6))
+    {
+        ultrasound_onSenseStart(&sensors[0], TIM10->CNT);
+    }
+    else
+    {
+        ultrasound_onSenseEnd(&sensors[0], TIM10->CNT);
     }
     break; 
   case GPIO_PIN_7:
-    sen2Cntr++;
-    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_7)) sen2Start = TIM10->CNT;
-    else {
-      sen2End = TIM10->CNT;
-      if (sen2End > sen2Start) sen2Length = sen2End-sen2Start;
-      else sen2Length = (sen2End+65535)-sen2Start;
+    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_7))
+    {
+        ultrasound_onSenseStart(&sensors[1], TIM10->CNT);
+    }
+    else
+    {
+        ultrasound_onSenseEnd(&sensors[1], TIM10->CNT);
     }
     break; 
   case GPIO_PIN_8:
-    sen3Cntr++;
-    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_8)) sen3Start = TIM10->CNT;
-    else {
-      sen3End = TIM10->CNT;
-      if (sen3End > sen3Start) sen3Length = sen3End-sen3Start;
-      else sen3Length = (sen3End+65535)-sen3Start;
-    }
+      if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_8))
+      {
+          ultrasound_onSenseStart(&sensors[2], TIM10->CNT);
+      }
+      else
+      {
+          ultrasound_onSenseEnd(&sensors[2], TIM10->CNT);
+      }
     break; 
   case GPIO_PIN_9:
-    sen4Cntr++;
-    if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_9)) sen4Start = TIM10->CNT;
-    else {
-      sen4End = TIM10->CNT;
-      if (sen4End > sen4Start) sen4Length = sen4End-sen4Start;
-      else sen4Length = (sen4End+65535)-sen4Start;
-    }
+      if (HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_9))
+      {
+          ultrasound_onSenseStart(&sensors[3], TIM10->CNT);
+      }
+      else
+      {
+          ultrasound_onSenseEnd(&sensors[3], TIM10->CNT);
+      }
     break; 
   default:
     break;
@@ -1270,8 +1325,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 }
 
 float filter2 (float avg, float input, float alpha) {
-  avg = (alpha * input) + (1.0 - alpha) * avg;
-  return avg;
+  return (alpha * input) + (1.0f - alpha) * avg;
 }
 
 void saturateInteger(int16_t* i, int16_t min, int16_t max) {
@@ -1281,35 +1335,48 @@ void saturateInteger(int16_t* i, int16_t min, int16_t max) {
   *i = val;
 }
 
-void saturateVolatileFloat(volatile float* i, float min, float max) {
-  float val = *i;
-  if (val < min) val = min;
-  else if (val > max) val = max;
-  *i = val;
+float saturateFloat(float i, float min, float max)
+{
+    float val;
+
+    if (i < min)
+    {
+      val = min;
+    }
+    else if (i > max)
+    {
+      val = max;
+    }
+    else
+    {
+      val = i;
+    }
+
+    return val;
 }
 
-void calculateLRSpeeds(float r, float phi) {
+void calculateLRSpeeds(float r, float phiDeg) {
 
-  phi = phi * PI / 180.0;
+  float phiRad = phiDeg * (M_PI / 180.0f);
   
-  if ((phi >= 0) && (phi < PI / 2.0)) //1st quadrant
+  if ((phiRad >= 0) && (phiRad < M_PI_2)) //1st quadrant
   {
       referenceSpeedLeft = r;
-      referenceSpeedRight = -r * cosf(2 * phi);
+      referenceSpeedRight = -r * cosf(2 * phiRad);
   }
-  else if ((phi >= PI / 2.0) && (phi < PI)) //2nd quadrant
+  else if ((phiRad >= M_PI_2) && (phiRad < M_PI)) //2nd quadrant
   {
-      referenceSpeedLeft = -r * cosf(2 * phi);
+      referenceSpeedLeft = -r * cosf(2 * phiRad);
       referenceSpeedRight = r;
   }
-  else if ((phi >= PI) && (phi < 3 * PI / 2.0)) //3rd quadrant
+  else if ((phiRad >= M_PI) && (phiRad < 3 * M_PI_2)) //3rd quadrant
   {
       referenceSpeedLeft = -r;
-      referenceSpeedRight = r * cosf(2 * phi);
+      referenceSpeedRight = r * cosf(2 * phiRad);
   }
-  else if ((phi >= 3 * PI / 2.0) && (phi <= 2 * PI)) //4th quadrant
+  else if ((phiRad >= 3 * M_PI_2) && (phiRad < M_2_PI)) //4th quadrant
   {
-      referenceSpeedLeft = r * cosf(2 * phi);
+      referenceSpeedLeft = r * cosf(2 * phiRad);
       referenceSpeedRight = -r;
   }
 }
@@ -1357,12 +1424,10 @@ void StartSensorTask(void const * argument)
 {
   /* USER CODE BEGIN StartSensorTask */
   uint32_t cycleCounter = 0;
-  uint32_t targetTick;
-  float compassBuffer[3];
-  float accelerometerBuffer[3] = {0};
   
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_Buf,6);
   /* Infinite loop */
+  TickType_t xLastWakeTime = xTaskGetTickCount();
   for(;;)
   {
     //test code START
@@ -1374,17 +1439,16 @@ void StartSensorTask(void const * argument)
     mot6Dir = HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_10);
     internalCounter = TIM10->CNT;
     //test code END
-    osDelay(speedSensingTaskCycle_ms);
+    vTaskDelayUntil(&xLastWakeTime, speedSensingTaskCycle_ms);
     cycleCounter++;
-    sen1Distance = sen1Length * 0.34/2;
-    sen2Distance = sen2Length * 0.34/2;
-    sen3Distance = sen3Length * 0.34/2;
-    sen4Distance = sen4Length * 0.34/2;
     
-    sen1DistanceFiltered = filter2(sen1DistanceFiltered, sen1Distance, 0.2);
-    sen2DistanceFiltered = filter2(sen2DistanceFiltered, sen2Distance, 0.2);
-    sen3DistanceFiltered = filter2(sen3DistanceFiltered, sen3Distance, 0.2);
-    sen4DistanceFiltered = filter2(sen4DistanceFiltered, sen4Distance, 0.2);
+    for (uint8_t i = 0u; i < sizeof(sensors) / sizeof(sensors[0]); i++)
+    {
+        const float ultrasoundSmoothingCoeff = 0.2f;
+        const float ultrasoundTimeToDistanceCoeff = 0.34f / 2;
+        sensors[i].rawDistance = sensors[i].length * ultrasoundTimeToDistanceCoeff;
+        sensors[i].filteredDistance = filter2(sensors[i].filteredDistance, sensors[i].rawDistance, ultrasoundSmoothingCoeff);
+    }
     
     batteryVoltage1 = ADC_Values[0]*3.0*10/4095;
     batteryVoltage2 = ADC_Values[1]*3.0*10/4095;
@@ -1392,84 +1456,91 @@ void StartSensorTask(void const * argument)
     sen2AnalogValue = ADC_Values[3];
     sen3AnalogValue = ADC_Values[4];
     sen4AnalogValue = ADC_Values[5];
+
+    /* Update wheel 1 */
+    int32_t dcntr1 = mot1Cntr - mot1CntrPrev;
+    /* Assume that an overflow has happened and fix it */
+    if (dcntr1 > 32000)
+    {
+        dcntr1 -= 65536;
+    }
+    else if (dcntr1 < -32000)
+    {
+        dcntr1 += 65536;
+    }
+    wheelL1Odometer_m += dcntr1 * distancePerImpulse;
+    wheelL1Angle_deg += dcntr1 * anglePerImpulse;
+
+    /* Update wheel 2 */
+    int32_t dcntr2 = mot2Cntr - mot2CntrPrev;
+    /* Assume that an overflow has happened and fix it */
+    if (dcntr2 > 32000)
+    {
+        dcntr2 -= 65536;
+    }
+    else if (dcntr2 < -32000)
+    {
+        dcntr2 += 65536;
+    }
+    wheelL2Odometer_m += dcntr2 * distancePerImpulse;
+    wheelL2Angle_deg += dcntr2 * anglePerImpulse;
+
+    /* Update wheel 3 */
+    int32_t dcntr3 = mot3Cntr - mot3CntrPrev;
+    /* Assume that an overflow has happened and fix it */
+    if (dcntr3 > 32000)
+    {
+        dcntr3 -= 65536;
+    }
+    else if (dcntr3 < -32000)
+    {
+        dcntr3 += 65536;
+    }
+    wheelL3Odometer_m += dcntr3 * distancePerImpulse;
+    wheelL3Angle_deg += dcntr3 * anglePerImpulse;
+
+    /* Update wheel 4 */
+    int32_t dcntr4 = mot4Cntr - mot4CntrPrev;
+    /* Assume that an overflow has happened and fix it */
+    if (dcntr4 > 32000)
+    {
+        dcntr4 -= 65536;
+    }
+    else if (dcntr4 < -32000)
+    {
+        dcntr4 += 65536;
+    }
+    wheelR1Odometer_m += dcntr4 * distancePerImpulse;
+    wheelR1Angle_deg += dcntr4 * anglePerImpulse;
+
+    /* Update wheel 5 */
+    int32_t dcntr5 = mot5Cntr - mot5CntrPrev;
+    /* Assume that an overflow has happened and fix it */
+    if (dcntr5 > 32000)
+    {
+        dcntr5 -= 65536;
+    }
+    else if (dcntr5 < -32000)
+    {
+        dcntr5 += 65536;
+    }
+    wheelR2Odometer_m += dcntr5 * distancePerImpulse;
+    wheelR2Angle_deg += dcntr5 * anglePerImpulse;
+
+    /* Update wheel 6 */
+    int32_t dcntr6 = mot6Cntr - mot6CntrPrev;
+    /* Assume that an overflow has happened and fix it */
+    if (dcntr6 > 32000)
+    {
+        dcntr6 -= 65536;
+    }
+    else if (dcntr6 < -32000)
+    {
+        dcntr6 += 65536;
+    }
+    wheelR3Odometer_m += dcntr6 * distancePerImpulse;
+    wheelR3Angle_deg += dcntr6 * anglePerImpulse;
     
-    if ((mot1Cntr - mot1CntrPrev) > 32000){
-      wheelL1Odometer_m += (mot1Cntr - 65535 - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL1Angle_deg += (mot1Cntr - 65535 - mot1CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else if ((mot1Cntr - mot1CntrPrev) < -32000){
-      wheelL1Odometer_m += (mot1Cntr + 65535 - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL1Angle_deg += (mot1Cntr + 65535 - mot1CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else {
-      wheelL1Odometer_m += (mot1Cntr - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL1Angle_deg += (mot1Cntr - mot1CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    
-    if ((mot2Cntr - mot2CntrPrev) > 32000){
-      wheelL2Odometer_m += (mot2Cntr - 65535 - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL2Angle_deg += (mot2Cntr - 65535 - mot2CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else if ((mot2Cntr - mot2CntrPrev) < -32000){
-      wheelL2Odometer_m += (mot2Cntr + 65535 - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL2Angle_deg += (mot2Cntr + 65535 - mot2CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else {
-      wheelL2Odometer_m += (mot2Cntr - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL2Angle_deg += (mot2Cntr - mot2CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    
-    if ((mot3Cntr - mot3CntrPrev) > 32000){
-      wheelL3Odometer_m += (mot3Cntr - 65535 - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL3Angle_deg += (mot3Cntr - 65535 - mot3CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else if ((mot3Cntr - mot3CntrPrev) < -32000){
-      wheelL3Odometer_m += (mot3Cntr + 65535 - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL3Angle_deg += (mot3Cntr + 65535 - mot3CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else {
-      wheelL3Odometer_m += (mot3Cntr - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL3Angle_deg += (mot3Cntr - mot3CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    
-    if ((mot4Cntr - mot4CntrPrev) > 32000){
-      wheelR1Odometer_m += (mot4Cntr - 65535 - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR1Angle_deg += (mot4Cntr - 65535 - mot4CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else if ((mot4Cntr - mot4CntrPrev) < -32000){
-      wheelR1Odometer_m += (mot4Cntr + 65535 - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR1Angle_deg += (mot4Cntr + 65535 - mot4CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else {
-      wheelR1Odometer_m += (mot4Cntr - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR1Angle_deg += (mot4Cntr - mot4CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    
-    if ((mot5Cntr - mot5CntrPrev) > 32000){
-      wheelR2Odometer_m += (mot5Cntr - 65535 - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR2Angle_deg += (mot5Cntr - 65535 - mot5CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else if ((mot5Cntr - mot5CntrPrev) < -32000){
-      wheelR2Odometer_m += (mot5Cntr + 65535 - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR2Angle_deg += (mot5Cntr + 65535 - mot5CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else {
-      wheelR2Odometer_m += (mot5Cntr - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR2Angle_deg += (mot5Cntr - mot5CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    
-    if ((mot6Cntr - mot6CntrPrev) > 32000){
-      wheelR3Odometer_m += (mot6Cntr - 65535 - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR3Angle_deg += (mot6Cntr - 65535 - mot6CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else if ((mot6Cntr - mot6CntrPrev) < -32000){
-      wheelR3Odometer_m += (mot6Cntr + 65535 - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR3Angle_deg += (mot6Cntr + 65535 - mot6CntrPrev) * 360 / encoderSignalsPerRound;
-    }
-    else {
-      wheelR3Odometer_m += (mot6Cntr - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR3Angle_deg += (mot6Cntr - mot6CntrPrev) * 360 / encoderSignalsPerRound;
-    }
     
     wheelL1RawVelocity_mps = (wheelL1Odometer_m - wheelL1Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
     wheelL2RawVelocity_mps = (wheelL2Odometer_m - wheelL2Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
@@ -1505,44 +1576,21 @@ void StartSensorTask(void const * argument)
     mot5CntrPrev = mot5Cntr;
     mot6CntrPrev = mot6Cntr;
     
-    if (cycleCounter % 10 == 0){
-      if (TIM10->CNT < 65534){
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET); //SEN1 trigger
-        targetTick = TIM10->CNT+1;
-        while (TIM10->CNT <= targetTick);
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET); //SEN1 trigger
-      }
+    for (uint8_t i = 0u; i < sizeof(sensors) / sizeof(sensors[0]); i++)
+    {
+        if (cycleCounter % 10 == 2 * i)
+        {
+            uint32_t currentTimerCounter = TIM10->CNT;
+            uint32_t targetCounter = currentTimerCounter + 2u;  //+2 so the delay is between 10 and 20us
+            HAL_GPIO_WritePin(sensors[i].controlPort, sensors[i].controlPin, GPIO_PIN_SET); //SEN1 trigger
+            while (TIM10->CNT != targetCounter);
+            HAL_GPIO_WritePin(sensors[i].controlPort, sensors[i].controlPin, GPIO_PIN_RESET); //SEN1 trigger
+        }
     }
-    
-    if (cycleCounter % 10 == 2){
-      if (TIM10->CNT < 65534){
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); //SEN2 trigger
-        targetTick = TIM10->CNT+1;
-        while (TIM10->CNT <= targetTick);
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); //SEN2 trigger
-      }
-    }
-    
-    if (cycleCounter % 10 == 4){
-      if (TIM10->CNT < 65534){
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_SET); //SEN3 trigger
-        targetTick = TIM10->CNT+1;
-        while (TIM10->CNT <= targetTick);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_RESET); //SEN3 trigger
-      }
-    }
-    
-    if (cycleCounter % 10 == 6){
-      if (TIM10->CNT < 65534){
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET); //SEN4 trigger
-        targetTick = TIM10->CNT+1;
-        while (TIM10->CNT <= targetTick);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_RESET); //SEN4 trigger
-      }
-    }
-    
+
     if (cycleCounter % 4 == 0){
       /* Read Acceleration*/
+      float accelerometerBuffer[3];
       BSP_ACCELERO_GetXYZ(accelerometerBuffer);
 
       accX = accelerometerBuffer[0];
@@ -1553,35 +1601,36 @@ void StartSensorTask(void const * argument)
       accYFiltered = filter2(accYFiltered, accY, 0.2);
       accZFiltered = filter2(accZFiltered, accZ, 0.2);
      
-      fNormAcc = sqrt((accXFiltered*accXFiltered)+(accYFiltered*accYFiltered)+(accZFiltered*accZFiltered));
+      fNormAcc = sqrtf((accXFiltered*accXFiltered)+(accYFiltered*accYFiltered)+(accZFiltered*accZFiltered));
         
       fSinRoll = accYFiltered/fNormAcc;
-      fCosRoll = sqrt(1.0-(fSinRoll * fSinRoll));
+      fCosRoll = sqrtf(1.0-(fSinRoll * fSinRoll));
       fSinPitch = accXFiltered/fNormAcc;
-      fCosPitch = sqrt(1.0-(fSinPitch * fSinPitch));
+      fCosPitch = sqrtf(1.0-(fSinPitch * fSinPitch));
         
       if ( fSinRoll >0) {
-        if (fCosRoll>0) roll = acos(fCosRoll)*180/PI;
-        else            roll = acos(fCosRoll)*180/PI + 180;
+        if (fCosRoll>0) roll = acosf(fCosRoll)*180/M_PI;
+        else            roll = acosf(fCosRoll)*180/M_PI + 180;
       }
       else {
-        if (fCosRoll>0) roll = acos(fCosRoll)*180/PI + 360;
-        else            roll = acos(fCosRoll)*180/PI + 180;
+        if (fCosRoll>0) roll = acosf(fCosRoll)*180/M_PI + 360;
+        else            roll = acosf(fCosRoll)*180/M_PI + 180;
       }
        
       if ( fSinPitch >0) {
-        if (fCosPitch>0) pitch = acos(fCosPitch)*180/PI;
-        else             pitch = acos(fCosPitch)*180/PI + 180;
+        if (fCosPitch>0) pitch = acosf(fCosPitch)*180/M_PI;
+        else             pitch = acosf(fCosPitch)*180/M_PI + 180;
       }
       else {
-        if (fCosPitch>0) pitch = acos(fCosPitch)*180/PI + 360;
-        else             pitch = acos(fCosPitch)*180/PI + 180;
+        if (fCosPitch>0) pitch = acosf(fCosPitch)*180/M_PI + 360;
+        else             pitch = acosf(fCosPitch)*180/M_PI + 180;
       }
 
       if (roll >=360)  roll = 360 - roll;
       if (pitch >=360) pitch = 360 - pitch;
       
       /* Read Magnetometer*/
+      float compassBuffer[3];
       LSM303DLHC_MagReadXYZ(compassBuffer);
       compassX = compassBuffer[0];
       compassY = compassBuffer[1];
@@ -1602,6 +1651,7 @@ void StartControlTask(void const * argument)
 {
   /* USER CODE BEGIN StartControlTask */
   /* Infinite loop */
+  TickType_t xLastWakeTime = xTaskGetTickCount();
   for(;;)
   {
     
@@ -1646,14 +1696,14 @@ void StartControlTask(void const * argument)
     wheelL1VelocityError = nextSpeedLeft - wheelL1FiltVelocity_mps;
     wheelL1VelocityIntError = wheelL1VelocityIntError + wheelL1VelocityError + antiWindup * (wheelL1SumControl - wheelL1SumControlBeforeSaturation);
     wheelL1VelocityDerivatedError = wheelL1VelocityError - wheelL1VelocityErrorBefore;
-    wheelL1SumControl = (int)(ctrlP * wheelL1VelocityError + ctrlI * wheelL1VelocityIntError + ctrlD * wheelL1VelocityDerivatedError);
+    wheelL1SumControl = (int)roundf(ctrlP * wheelL1VelocityError + ctrlI * wheelL1VelocityIntError + ctrlD * wheelL1VelocityDerivatedError);
     wheelL1SumControlBeforeSaturation = wheelL1SumControl;
     
     wheelL2VelocityErrorBefore = wheelL2VelocityError;
     wheelL2VelocityError = nextSpeedLeft - wheelL2FiltVelocity_mps;
     wheelL2VelocityIntError = wheelL2VelocityIntError + wheelL2VelocityError + antiWindup * (wheelL2SumControl - wheelL2SumControlBeforeSaturation);
     wheelL2VelocityDerivatedError = wheelL2VelocityError - wheelL2VelocityErrorBefore;
-    wheelL2SumControl = (int)(ctrlP * wheelL2VelocityError + ctrlI * wheelL2VelocityIntError + ctrlD * wheelL2VelocityDerivatedError);
+    wheelL2SumControl = (int)roundf(ctrlP * wheelL2VelocityError + ctrlI * wheelL2VelocityIntError + ctrlD * wheelL2VelocityDerivatedError);
     wheelL2SumControlBeforeSaturation = wheelL2SumControl;
     
     positionErrorL3_deg = referenceAngleL3_deg - wheelL3Angle_deg;
@@ -1662,47 +1712,47 @@ void StartControlTask(void const * argument)
     wheelL3VelocityError = (positionErrorL3_deg * ctrlP_pos) - wheelL3FiltVelocity_mps;
     wheelL3VelocityIntError = wheelL3VelocityIntError + wheelL3VelocityError + antiWindup * (wheelL3SumControl - wheelL3SumControlBeforeSaturation);
     wheelL3VelocityDerivatedError = wheelL3VelocityError - wheelL3VelocityErrorBefore;
-    wheelL3SumControl = (int)(ctrlP * wheelL3VelocityError + ctrlI * wheelL3VelocityIntError + ctrlD * wheelL3VelocityDerivatedError);
+    wheelL3SumControl = (int)roundf(ctrlP * wheelL3VelocityError + ctrlI * wheelL3VelocityIntError + ctrlD * wheelL3VelocityDerivatedError);
     wheelL3SumControlBeforeSaturation = wheelL3SumControl;
     
     wheelR1VelocityErrorBefore = wheelR1VelocityError;
     wheelR1VelocityError = nextSpeedRight - wheelR1FiltVelocity_mps;
     wheelR1VelocityIntError = wheelR1VelocityIntError + wheelR1VelocityError + antiWindup * (wheelR1SumControl - wheelR1SumControlBeforeSaturation);
     wheelR1VelocityDerivatedError = wheelR1VelocityError - wheelR1VelocityErrorBefore;
-    wheelR1SumControl = (int)(ctrlP * wheelR1VelocityError + ctrlI * wheelR1VelocityIntError + ctrlD * wheelR1VelocityDerivatedError);
+    wheelR1SumControl = (int)roundf(ctrlP * wheelR1VelocityError + ctrlI * wheelR1VelocityIntError + ctrlD * wheelR1VelocityDerivatedError);
     wheelR1SumControlBeforeSaturation = wheelR1SumControl;
     
     wheelR2VelocityErrorBefore = wheelR2VelocityError;
     wheelR2VelocityError = nextSpeedRight - wheelR2FiltVelocity_mps;
     wheelR2VelocityIntError = wheelR2VelocityIntError + wheelR2VelocityError + antiWindup * (wheelR2SumControl - wheelR2SumControlBeforeSaturation);
     wheelR2VelocityDerivatedError = wheelR2VelocityError - wheelR2VelocityErrorBefore;
-    wheelR2SumControl = (int)(ctrlP * wheelR2VelocityError + ctrlI * wheelR2VelocityIntError + ctrlD * wheelR2VelocityDerivatedError);
+    wheelR2SumControl = (int)roundf(ctrlP * wheelR2VelocityError + ctrlI * wheelR2VelocityIntError + ctrlD * wheelR2VelocityDerivatedError);
     wheelR2SumControlBeforeSaturation = wheelR2SumControl;
     
     wheelR3VelocityErrorBefore = wheelR3VelocityError;
     wheelR3VelocityError = nextSpeedRight - wheelR3FiltVelocity_mps;
     wheelR3VelocityIntError = wheelR3VelocityIntError + wheelR3VelocityError + antiWindup * (wheelR3SumControl - wheelR3SumControlBeforeSaturation);
     wheelR3VelocityDerivatedError = wheelR3VelocityError - wheelR3VelocityErrorBefore;
-    wheelR3SumControl = (int)(ctrlP * wheelR3VelocityError + ctrlI * wheelR3VelocityIntError + ctrlD * wheelR3VelocityDerivatedError);
+    wheelR3SumControl = (int)roundf(ctrlP * wheelR3VelocityError + ctrlI * wheelR3VelocityIntError + ctrlD * wheelR3VelocityDerivatedError);
     wheelR3SumControlBeforeSaturation = wheelR3SumControl;
     
-    if (fabs(nextSpeedLeft) < 0.01) {
+    if (fabsf(nextSpeedLeft) < 0.01) {
       wheelL1VelocityIntError -= wheelL1VelocityIntError*0.01;
       wheelL2VelocityIntError -= wheelL2VelocityIntError*0.01;
       wheelL3VelocityIntError -= wheelL3VelocityIntError*0.01;
     }
-    if (fabs(nextSpeedRight) < 0.01) {
+    if (fabsf(nextSpeedRight) < 0.01) {
       wheelR1VelocityIntError -= wheelR1VelocityIntError*0.01;
       wheelR2VelocityIntError -= wheelR2VelocityIntError*0.01;
       wheelR3VelocityIntError -= wheelR3VelocityIntError*0.01;
     }
     
-    saturateVolatileFloat(&wheelL1SumControl, -maxDutyCycle, maxDutyCycle);
-    saturateVolatileFloat(&wheelL2SumControl, -maxDutyCycle, maxDutyCycle);
-    saturateVolatileFloat(&wheelL3SumControl, -maxDutyCycle, maxDutyCycle);
-    saturateVolatileFloat(&wheelR1SumControl, -maxDutyCycle, maxDutyCycle);
-    saturateVolatileFloat(&wheelR2SumControl, -maxDutyCycle, maxDutyCycle);
-    saturateVolatileFloat(&wheelR3SumControl, -maxDutyCycle, maxDutyCycle);
+    wheelL1SumControl = saturateFloat(wheelL1SumControl, -maxDutyCycle, maxDutyCycle);
+    wheelL2SumControl = saturateFloat(wheelL2SumControl, -maxDutyCycle, maxDutyCycle);
+    wheelL3SumControl = saturateFloat(wheelL3SumControl, -maxDutyCycle, maxDutyCycle);
+    wheelR1SumControl = saturateFloat(wheelR1SumControl, -maxDutyCycle, maxDutyCycle);
+    wheelR2SumControl = saturateFloat(wheelR2SumControl, -maxDutyCycle, maxDutyCycle);
+    wheelR3SumControl = saturateFloat(wheelR3SumControl, -maxDutyCycle, maxDutyCycle);
     
     if (wheelL1SumControl>=0){
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET); //LEFT1 FW
@@ -1768,8 +1818,8 @@ void StartControlTask(void const * argument)
     
     currSpeedLeft = nextSpeedLeft;
     currSpeedRight = nextSpeedRight;
-    
-    osDelay(20);
+
+    vTaskDelayUntil(&xLastWakeTime, 20u);
   }
   /* USER CODE END StartControlTask */
 }
@@ -1785,6 +1835,7 @@ void StartCommTask(void const * argument)
 {
   /* USER CODE BEGIN StartCommTask */
   /* Infinite loop */
+  TickType_t xLastWakeTime = xTaskGetTickCount();
   for(;;)
   {
     HAL_UART_Receive_IT(&huart6,receiveBuffer,5);
@@ -1817,7 +1868,7 @@ void StartCommTask(void const * argument)
       processButtons(buttonState);
     }
     
-    osDelay(20);
+    vTaskDelayUntil(&xLastWakeTime, 20u);
   }
   /* USER CODE END StartCommTask */
 }
@@ -1869,9 +1920,9 @@ void StartLedTask(void const * argument)
   WS2812_One_RGB(3,(WS2812_RGB_t){10,10,0},0);
   WS2812_One_RGB(4,(WS2812_RGB_t){0,0,10},1);
   /* Infinite loop */
+  TickType_t xLastWakeTime = xTaskGetTickCount();
   for(;;)
   {
-    osDelay(150);
     cycleCounter++;
     HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
     
@@ -1941,6 +1992,7 @@ void StartLedTask(void const * argument)
     WS2812_Refresh();
     HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
 
+    vTaskDelayUntil(&xLastWakeTime, 150u);
   }
   /* USER CODE END StartLedTask */
 }
