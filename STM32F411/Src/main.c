@@ -65,6 +65,7 @@ osThreadId controlTaskHandle;
 osThreadId commTaskHandle;
 osThreadId idleTaskHandle;
 osThreadId ledTaskHandle;
+osThreadId applicationTaskHandle;
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 #define ABS(x)         (((x) < 0) ? (-(x)) : (x))
@@ -103,15 +104,14 @@ typedef struct
     const GPIO_TypeDef* controlPort;
     const uint16_t controlPin;
 
-    const GPIO_TypeDef* sensePort;
-    const uint16_t sensePin;
-
     uint32_t counter;
     uint32_t start;
     uint32_t end;
     uint32_t length;
 
+    uint16_t debounceCounter;
     float rawDistance;
+    float prevDistance;
     float filteredDistance;
 } Ultrasound_t;
 
@@ -123,7 +123,9 @@ typedef struct
     .start = 0u,                                                \
     .end = 0u,                                                  \
     .length = 0u,                                               \
+    .debounceCounter = 1000u,                                   \
     .rawDistance = 0.0f,                                        \
+    .previousDistance = 0.0f,                                   \
     .filteredDistance = 0.0f                                    \
 }
 
@@ -228,6 +230,11 @@ static volatile float ctrlD = 0;
 static volatile float positionErrorL3_deg = 0;
 static volatile float referenceAngleL3_deg = 0;
 static volatile float ctrlP_pos = 0.01;
+
+static volatile uint16_t ultrasonicDebounceLimit = 50;
+static volatile uint8_t ultrasonicActive = 0;
+static volatile uint8_t bumperActive = 0;
+static volatile uint8_t autonomousActive = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -253,6 +260,7 @@ void StartControlTask(void const * argument);
 void StartCommTask(void const * argument);
 void StartIdleTask(void const * argument);
 void StartLedTask(void const * argument);
+void StartApplicationTask(void const * argument);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
@@ -427,6 +435,10 @@ int main(void)
   /* definition and creation of ledTask */
   osThreadDef(ledTask, StartLedTask, osPriorityNormal, 0, 128);
   ledTaskHandle = osThreadCreate(osThread(ledTask), NULL);
+
+  /* definition and creation of applicationTask */
+  osThreadDef(applicationTask, StartApplicationTask, osPriorityNormal, 0, 128);
+  applicationTaskHandle = osThreadCreate(osThread(applicationTask), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -1388,6 +1400,14 @@ void processButtons(uint8_t buttons){
   if ((buttons & 0x04) == 0x04){
     referenceAngleL3_deg -= 1;
   }
+  
+  if ((buttons & 0x10) == 0x10){
+    autonomousActive = 1;
+  }
+  else {
+    autonomousActive = 0;
+  }
+
   //else{
   //  //referenceAngleL3_deg = wheelL3Angle_deg;
   //}
@@ -1447,6 +1467,19 @@ void StartSensorTask(void const * argument)
         const float ultrasoundSmoothingCoeff = 0.2f;
         const float ultrasoundTimeToDistanceCoeff = 0.34f / 2;
         sensors[i].rawDistance = sensors[i].length * ultrasoundTimeToDistanceCoeff;
+
+        if (sensors[i].rawDistance == sensors[i].previousDistance)
+        {
+            if (sensors[i].debounceCounter < 1000u)
+            {
+                sensors[i].debounceCounter++;
+            }
+        }
+        else
+        {
+            sensors[i].debounceCounter = 0u;
+        }
+        sensors[i].previousDistance = sensors[i].rawDistance;
         sensors[i].filteredDistance = filter2(sensors[i].filteredDistance, sensors[i].rawDistance, ultrasoundSmoothingCoeff);
     }
     
@@ -1845,9 +1878,7 @@ void StartCommTask(void const * argument)
       //referenceSpeed = calcSpdRef_LUT(referenceSpeedOrig);
       referenceSpeed = receiveBuffer[1] / 667.0;
       referenceAngle = receiveBuffer[2] * 2.0;
-      calculateLRSpeeds(referenceSpeed, referenceAngle);
       buttonState = receiveBuffer[3];
-      processButtons(buttonState);
       messageCounter = receiveBuffer[4];
       if (messageCounter != messageCounterPrev){
         timeStamp = HAL_GetTick();
@@ -1863,9 +1894,7 @@ void StartCommTask(void const * argument)
     if ((timeOutGuard) > 1000){
       referenceSpeed = 0;
       referenceAngle = 0;
-      calculateLRSpeeds(referenceSpeed, referenceAngle);
       buttonState = 0;
-      processButtons(buttonState);
     }
     
     vTaskDelayUntil(&xLastWakeTime, 20u);
@@ -1926,15 +1955,17 @@ void StartLedTask(void const * argument)
     cycleCounter++;
     HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_14);
     
-    if ((sen1AnalogValue < 100) && (sen2AnalogValue < 100) && (sen3AnalogValue < 100) && (sen4AnalogValue < 100)){
+    if (bumperActive){
+      WS2812_All_RGB((WS2812_RGB_t){10,0,0},0);
+    }
+    else if (ultrasonicActive){
+      WS2812_All_RGB((WS2812_RGB_t){0,10,0},0);
+    }
+    else {
       WS2812_All_RGB((WS2812_RGB_t){0,0,0},0);
       WS2812_One_RGB(((roundCounter%12)+4),(WS2812_RGB_t){0,0,10},0);
       roundCounter++;
       WS2812_Revvy_Shift_Right(0);
-      
-    }
-    else {
-      WS2812_All_RGB((WS2812_RGB_t){10,0,0},0);
     }
     
     
@@ -1995,6 +2026,55 @@ void StartLedTask(void const * argument)
     vTaskDelayUntil(&xLastWakeTime, 150u);
   }
   /* USER CODE END StartLedTask */
+}
+
+/* USER CODE BEGIN Header_StartApplicationTask */
+/**
+* @brief Function implementing the applicationTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartApplicationTask */
+void StartApplicationTask(void const * argument)
+{
+  /* USER CODE BEGIN StartApplicationTask */
+  /* Infinite loop */
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  for(;;)
+  {
+    if (autonomousActive){
+      referenceAngle = 90;
+      referenceSpeed = 0.08;
+    }
+    
+    if (((sensors[0].filteredDistance < 20) && (sensors[0].debounceCounter < ultrasonicDebounceLimit)) 
+        || ((sensors[1].filteredDistance < 20) && (sensors[1].debounceCounter < ultrasonicDebounceLimit)) 
+        || ((sensors[2].filteredDistance < 20) && (sensors[2].debounceCounter < ultrasonicDebounceLimit)) 
+        || ((sensors[3].filteredDistance < 20) && (sensors[3].debounceCounter < ultrasonicDebounceLimit))){
+      ultrasonicActive = 1;
+      referenceAngle = 180;
+      referenceSpeed = 0.1;
+    }
+    else {
+      ultrasonicActive = 0;
+    }
+    
+    
+    if ((sen1AnalogValue > 100) || (sen2AnalogValue > 100) || (sen3AnalogValue > 100) || (sen4AnalogValue > 100)){
+      bumperActive = 1;
+      referenceAngle = 90;
+      referenceSpeed = 0.05;
+    }
+    else {
+      bumperActive = 0;
+    }
+    
+    calculateLRSpeeds(referenceSpeed, referenceAngle);
+    processButtons(buttonState);
+
+    vTaskDelayUntil(10u);
+  }
+  /* USER CODE END StartApplicationTask */
 }
 
 /**
