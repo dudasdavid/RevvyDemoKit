@@ -13,6 +13,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <math.h>
+#include <float.h>
 #include <stdlib.h>
 #include "WS2812_Lib.h"
 #include "stm32f411e_discovery.h"
@@ -68,7 +69,6 @@ osThreadId ledTaskHandle;
 osThreadId applicationTaskHandle;
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-#define ABS(x)         (((x) < 0) ? (-(x)) : (x))
 
 #define COMPASS_X_MAX 702
 #define COMPASS_X_MIN -358
@@ -247,6 +247,87 @@ static void MotorControl_SetSpeed(const MotorControl_t* motor, int32_t speed)
     }
 }
 
+typedef struct
+{
+    float P;
+    float I;
+    float D;
+
+    float umax;
+    float umin;
+
+    float integrator;
+    float previousError;
+
+    float unsaturatedControlSignal;
+    float saturatedControlSignal;
+} PID_t;
+
+#define DEFINE_PID(p, i, d, min, max)   \
+{                                       \
+    .P = p,                             \
+    .I = i,                             \
+    .D = d,                             \
+    .umax = max,                        \
+    .umin = min,                        \
+    .integrator = 0.0f,                 \
+    .previousError = 0.0f,              \
+    .unsaturatedControlSignal = 0.0f,   \
+    .saturatedControlSignal = 0.0f      \
+}
+
+static PID_t speedControllers[] =
+{
+    /* Left side motors */
+    DEFINE_PID(750.0f, 10.0f, 0.0f, -100.0f, 100.0f),
+    DEFINE_PID(750.0f, 10.0f, 0.0f, -100.0f, 100.0f),
+    DEFINE_PID(750.0f, 10.0f, 0.0f, -100.0f, 100.0f),
+
+    /* Right side motors */
+    DEFINE_PID(750.0f, 10.0f, 0.0f, -100.0f, 100.0f),
+    DEFINE_PID(750.0f, 10.0f, 0.0f, -100.0f, 100.0f),
+    DEFINE_PID(750.0f, 10.0f, 0.0f, -100.0f, 100.0f),
+};
+
+static PID_t positionController = DEFINE_PID(0.01f, 0.0f, 0.0f, -FLT_MAX, FLT_MAX);
+
+static float saturateFloat(float i, float min, float max);
+
+static float Controller_PID(PID_t* context, float reference, float feedback)
+{
+    float error = reference - feedback;
+
+    /* Proportional */
+    float p = context->P * error;
+
+    /* Differential */
+    float d = context->D * (context->previousError - error);
+    context->previousError = error;
+
+    /* Integral - using the FOXBORO structure */
+    float i = context->integrator;
+
+    float unsaturated = p + i + d;
+    float saturated = saturateFloat(unsaturated, context->umin, context->umax);
+
+    context->integrator = (1.0f - context->I) * context->integrator + context->I * saturated;
+
+    /* Debug variables */
+    context->unsaturatedControlSignal = unsaturated;
+    context->saturatedControlSignal = saturated;
+
+    return saturated;
+}
+
+static float Controller_P(PID_t* context, float reference, float feedback)
+{
+    float error = reference - feedback;
+
+    float p = context->P * error;
+
+    return saturateFloat(p, context->umin, context->umax);
+}
+
 static volatile float batteryVoltage1 = 0;
 static volatile float batteryVoltage2 = 0;
 
@@ -304,22 +385,10 @@ static volatile float nextSpeedLeft, nextSpeedRight = 0;
 static volatile float reqSpeedLeft, reqSpeedRight, currSpeedLeft, currSpeedRight = 0;
 static volatile float speedRampRate = 0.05;
 
-static volatile float wheelL1VelocityError, wheelL1VelocityErrorBefore, wheelL1VelocityIntError, wheelL1VelocityDerivatedError, wheelL1SumControl, wheelL1SumControlBeforeSaturation = 0;
-static volatile float wheelL2VelocityError, wheelL2VelocityErrorBefore, wheelL2VelocityIntError, wheelL2VelocityDerivatedError, wheelL2SumControl, wheelL2SumControlBeforeSaturation = 0;
-static volatile float wheelL3VelocityError, wheelL3VelocityErrorBefore, wheelL3VelocityIntError, wheelL3VelocityDerivatedError, wheelL3SumControl, wheelL3SumControlBeforeSaturation = 0;
-static volatile float wheelR1VelocityError, wheelR1VelocityErrorBefore, wheelR1VelocityIntError, wheelR1VelocityDerivatedError, wheelR1SumControl, wheelR1SumControlBeforeSaturation = 0;
-static volatile float wheelR2VelocityError, wheelR2VelocityErrorBefore, wheelR2VelocityIntError, wheelR2VelocityDerivatedError, wheelR2SumControl, wheelR2SumControlBeforeSaturation = 0;
-static volatile float wheelR3VelocityError, wheelR3VelocityErrorBefore, wheelR3VelocityIntError, wheelR3VelocityDerivatedError, wheelR3SumControl, wheelR3SumControlBeforeSaturation = 0;
-
-static volatile float maxDutyCycle = 100;
-static volatile float antiWindup = 0.004;
-static volatile float ctrlP = 750;
-static volatile float ctrlI = 10;
-static volatile float ctrlD = 0;
+static volatile float wheelControlSignal[6];
 
 static volatile float positionErrorL3_deg = 0;
 static volatile float referenceAngleL3_deg = 0;
-static volatile float ctrlP_pos = 0.01;
 
 static volatile uint16_t ultrasonicDebounceLimit = 50;
 static volatile uint8_t ultrasonicActive = 0;
@@ -1437,7 +1506,7 @@ void saturateInteger(int16_t* i, int16_t min, int16_t max) {
   *i = val;
 }
 
-float saturateFloat(float i, float min, float max)
+static float saturateFloat(float i, float min, float max)
 {
     float val;
 
@@ -1772,119 +1841,49 @@ void StartControlTask(void const * argument)
   TickType_t xLastWakeTime = xTaskGetTickCount();
   for(;;)
   {
-    
-    reqSpeedLeft = -referenceSpeedLeft;
-    reqSpeedRight = referenceSpeedRight;
-    
-    if (reqSpeedLeft > currSpeedLeft){
-      if (reqSpeedLeft > currSpeedLeft + speedRampRate){
-        nextSpeedLeft = currSpeedLeft + speedRampRate;
-      }
-      else{
-        nextSpeedLeft = reqSpeedLeft;
-      }
-    }
-    else if (reqSpeedLeft < currSpeedLeft){
-      if (reqSpeedLeft < currSpeedLeft - speedRampRate){
-        nextSpeedLeft = currSpeedLeft - speedRampRate;
-      }
-      else{
-        nextSpeedLeft = reqSpeedLeft;
-      }
-    }
-    
-    if (reqSpeedRight > currSpeedRight){
-      if (reqSpeedRight > currSpeedRight + speedRampRate){
-        nextSpeedRight = currSpeedRight + speedRampRate;
-      }
-      else{
-        nextSpeedRight = reqSpeedRight;
-      }
-    }
-    else if (reqSpeedRight < currSpeedRight){
-      if (reqSpeedRight < currSpeedRight - speedRampRate){
-        nextSpeedRight = currSpeedRight - speedRampRate;
-      }
-      else{
-        nextSpeedRight = reqSpeedRight;
-      }
-    }
-    
-    wheelL1VelocityErrorBefore = wheelL1VelocityError;
-    wheelL1VelocityError = nextSpeedLeft - wheelL1FiltVelocity_mps;
-    wheelL1VelocityIntError = wheelL1VelocityIntError + wheelL1VelocityError + antiWindup * (wheelL1SumControl - wheelL1SumControlBeforeSaturation);
-    wheelL1VelocityDerivatedError = wheelL1VelocityError - wheelL1VelocityErrorBefore;
-    wheelL1SumControl = (int)roundf(ctrlP * wheelL1VelocityError + ctrlI * wheelL1VelocityIntError + ctrlD * wheelL1VelocityDerivatedError);
-    wheelL1SumControlBeforeSaturation = wheelL1SumControl;
-    
-    wheelL2VelocityErrorBefore = wheelL2VelocityError;
-    wheelL2VelocityError = nextSpeedLeft - wheelL2FiltVelocity_mps;
-    wheelL2VelocityIntError = wheelL2VelocityIntError + wheelL2VelocityError + antiWindup * (wheelL2SumControl - wheelL2SumControlBeforeSaturation);
-    wheelL2VelocityDerivatedError = wheelL2VelocityError - wheelL2VelocityErrorBefore;
-    wheelL2SumControl = (int)roundf(ctrlP * wheelL2VelocityError + ctrlI * wheelL2VelocityIntError + ctrlD * wheelL2VelocityDerivatedError);
-    wheelL2SumControlBeforeSaturation = wheelL2SumControl;
-    
-    positionErrorL3_deg = referenceAngleL3_deg - wheelL3Angle_deg;
-    
-    wheelL3VelocityErrorBefore = wheelL3VelocityError;
-    wheelL3VelocityError = (positionErrorL3_deg * ctrlP_pos) - wheelL3FiltVelocity_mps;
-    wheelL3VelocityIntError = wheelL3VelocityIntError + wheelL3VelocityError + antiWindup * (wheelL3SumControl - wheelL3SumControlBeforeSaturation);
-    wheelL3VelocityDerivatedError = wheelL3VelocityError - wheelL3VelocityErrorBefore;
-    wheelL3SumControl = (int)roundf(ctrlP * wheelL3VelocityError + ctrlI * wheelL3VelocityIntError + ctrlD * wheelL3VelocityDerivatedError);
-    wheelL3SumControlBeforeSaturation = wheelL3SumControl;
-    
-    wheelR1VelocityErrorBefore = wheelR1VelocityError;
-    wheelR1VelocityError = nextSpeedRight - wheelR1FiltVelocity_mps;
-    wheelR1VelocityIntError = wheelR1VelocityIntError + wheelR1VelocityError + antiWindup * (wheelR1SumControl - wheelR1SumControlBeforeSaturation);
-    wheelR1VelocityDerivatedError = wheelR1VelocityError - wheelR1VelocityErrorBefore;
-    wheelR1SumControl = (int)roundf(ctrlP * wheelR1VelocityError + ctrlI * wheelR1VelocityIntError + ctrlD * wheelR1VelocityDerivatedError);
-    wheelR1SumControlBeforeSaturation = wheelR1SumControl;
-    
-    wheelR2VelocityErrorBefore = wheelR2VelocityError;
-    wheelR2VelocityError = nextSpeedRight - wheelR2FiltVelocity_mps;
-    wheelR2VelocityIntError = wheelR2VelocityIntError + wheelR2VelocityError + antiWindup * (wheelR2SumControl - wheelR2SumControlBeforeSaturation);
-    wheelR2VelocityDerivatedError = wheelR2VelocityError - wheelR2VelocityErrorBefore;
-    wheelR2SumControl = (int)roundf(ctrlP * wheelR2VelocityError + ctrlI * wheelR2VelocityIntError + ctrlD * wheelR2VelocityDerivatedError);
-    wheelR2SumControlBeforeSaturation = wheelR2SumControl;
-    
-    wheelR3VelocityErrorBefore = wheelR3VelocityError;
-    wheelR3VelocityError = nextSpeedRight - wheelR3FiltVelocity_mps;
-    wheelR3VelocityIntError = wheelR3VelocityIntError + wheelR3VelocityError + antiWindup * (wheelR3SumControl - wheelR3SumControlBeforeSaturation);
-    wheelR3VelocityDerivatedError = wheelR3VelocityError - wheelR3VelocityErrorBefore;
-    wheelR3SumControl = (int)roundf(ctrlP * wheelR3VelocityError + ctrlI * wheelR3VelocityIntError + ctrlD * wheelR3VelocityDerivatedError);
-    wheelR3SumControlBeforeSaturation = wheelR3SumControl;
-    
-    if (fabsf(nextSpeedLeft) < 0.01) {
-      wheelL1VelocityIntError -= wheelL1VelocityIntError*0.01;
-      wheelL2VelocityIntError -= wheelL2VelocityIntError*0.01;
-      wheelL3VelocityIntError -= wheelL3VelocityIntError*0.01;
-    }
-    if (fabsf(nextSpeedRight) < 0.01) {
-      wheelR1VelocityIntError -= wheelR1VelocityIntError*0.01;
-      wheelR2VelocityIntError -= wheelR2VelocityIntError*0.01;
-      wheelR3VelocityIntError -= wheelR3VelocityIntError*0.01;
-    }
-    
-    wheelL1SumControl = saturateFloat(wheelL1SumControl, -maxDutyCycle, maxDutyCycle);
-    wheelL2SumControl = saturateFloat(wheelL2SumControl, -maxDutyCycle, maxDutyCycle);
-    wheelL3SumControl = saturateFloat(wheelL3SumControl, -maxDutyCycle, maxDutyCycle);
-    wheelR1SumControl = saturateFloat(wheelR1SumControl, -maxDutyCycle, maxDutyCycle);
-    wheelR2SumControl = saturateFloat(wheelR2SumControl, -maxDutyCycle, maxDutyCycle);
-    wheelR3SumControl = saturateFloat(wheelR3SumControl, -maxDutyCycle, maxDutyCycle);
+        /* Calculate speed reference signals */
+        reqSpeedLeft = -referenceSpeedLeft;
+        reqSpeedRight = referenceSpeedRight;
 
-    MotorControl_SetSpeed(&motors[MOTOR_LEFT1], (int32_t) wheelL1SumControl);
-    MotorControl_SetSpeed(&motors[MOTOR_LEFT2], (int32_t) wheelL2SumControl);
-    MotorControl_SetSpeed(&motors[MOTOR_LEFT3], (int32_t) wheelL3SumControl);
-    
-    MotorControl_SetSpeed(&motors[MOTOR_RIGHT1], (int32_t) wheelR1SumControl);
-    MotorControl_SetSpeed(&motors[MOTOR_RIGHT2], (int32_t) wheelR2SumControl);
-    MotorControl_SetSpeed(&motors[MOTOR_RIGHT3], (int32_t) wheelR3SumControl);
+        nextSpeedLeft = saturateFloat(reqSpeedLeft, currSpeedLeft - speedRampRate, currSpeedLeft + speedRampRate);
+        nextSpeedRight = saturateFloat(reqSpeedRight, currSpeedRight - speedRampRate, currSpeedRight + speedRampRate);
 
-    currSpeedLeft = nextSpeedLeft;
-    currSpeedRight = nextSpeedRight;
+        /* Update position controller */
+        float l3Speed = Controller_P(&positionController, referenceAngleL3_deg, wheelL3Angle_deg);
 
-    vTaskDelayUntil(&xLastWakeTime, 20u);
-  }
+        float nextSpeeds[] =
+        {
+            nextSpeedLeft,
+            nextSpeedLeft,
+            l3Speed,
+            nextSpeedRight,
+            nextSpeedRight,
+            nextSpeedRight
+        };
+
+        currSpeedLeft = nextSpeedLeft;
+        currSpeedRight = nextSpeedRight;
+
+        /* Update speed controllers */
+        wheelControlSignal[MOTOR_LEFT1] = Controller_PID(&speedControllers[MOTOR_LEFT1], nextSpeeds[MOTOR_LEFT1], wheelL1FiltVelocity_mps);
+        wheelControlSignal[MOTOR_LEFT2] = Controller_PID(&speedControllers[MOTOR_LEFT2], nextSpeeds[MOTOR_LEFT2], wheelL2FiltVelocity_mps);
+        wheelControlSignal[MOTOR_LEFT3] = Controller_PID(&speedControllers[MOTOR_LEFT3], nextSpeeds[MOTOR_LEFT3], wheelL3FiltVelocity_mps);
+
+        wheelControlSignal[MOTOR_RIGHT1] = Controller_PID(&speedControllers[MOTOR_RIGHT1], nextSpeeds[MOTOR_RIGHT1], wheelR1FiltVelocity_mps);
+        wheelControlSignal[MOTOR_RIGHT2] = Controller_PID(&speedControllers[MOTOR_RIGHT2], nextSpeeds[MOTOR_RIGHT2], wheelR2FiltVelocity_mps);
+        wheelControlSignal[MOTOR_RIGHT3] = Controller_PID(&speedControllers[MOTOR_RIGHT3], nextSpeeds[MOTOR_RIGHT3], wheelR3FiltVelocity_mps);
+
+        /* Set output signals */
+        MotorControl_SetSpeed(&motors[MOTOR_LEFT1], (int32_t) wheelControlSignal[MOTOR_LEFT1]);
+        MotorControl_SetSpeed(&motors[MOTOR_LEFT2], (int32_t) wheelControlSignal[MOTOR_LEFT2]);
+        MotorControl_SetSpeed(&motors[MOTOR_LEFT3], (int32_t) wheelControlSignal[MOTOR_LEFT3]);
+
+        MotorControl_SetSpeed(&motors[MOTOR_RIGHT1], (int32_t) wheelControlSignal[MOTOR_RIGHT1]);
+        MotorControl_SetSpeed(&motors[MOTOR_RIGHT2], (int32_t) wheelControlSignal[MOTOR_RIGHT2]);
+        MotorControl_SetSpeed(&motors[MOTOR_RIGHT3], (int32_t) wheelControlSignal[MOTOR_RIGHT3]);
+
+        vTaskDelayUntil(&xLastWakeTime, 20u);
+    }
   /* USER CODE END StartControlTask */
 }
 
