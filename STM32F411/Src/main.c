@@ -1584,11 +1584,7 @@ void StartDefaultTask(void const * argument)
 {
 
   /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+    vTaskSuspend(NULL);
   /* USER CODE END 5 */ 
 }
 
@@ -1733,7 +1729,6 @@ void StartSensorTask(void const * argument)
     wheelR3Odometer_m += dcntr6 * distancePerImpulse;
     wheelR3Angle_deg += dcntr6 * anglePerImpulse;
     
-    
     wheelL1RawVelocity_mps = (wheelL1Odometer_m - wheelL1Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
     wheelL2RawVelocity_mps = (wheelL2Odometer_m - wheelL2Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
     wheelL3RawVelocity_mps = (wheelL3Odometer_m - wheelL3Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
@@ -1823,24 +1818,9 @@ void StartSensorTask(void const * argument)
       compassY = compassBuffer[1];
       compassZ = compassBuffer[2];
     }
-  }
-  /* USER CODE END StartSensorTask */
-}
 
-/* USER CODE BEGIN Header_StartControlTask */
-/**
-* @brief Function implementing the controlTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartControlTask */
-void StartControlTask(void const * argument)
-{
-  /* USER CODE BEGIN StartControlTask */
-  /* Infinite loop */
-  TickType_t xLastWakeTime = xTaskGetTickCount();
-  for(;;)
-  {
+    if (cycleCounter % 2 == 0)
+    {
         /* Calculate speed reference signals */
         reqSpeedLeft = -referenceSpeedLeft;
         reqSpeedRight = referenceSpeedRight;
@@ -1881,9 +1861,55 @@ void StartControlTask(void const * argument)
         MotorControl_SetSpeed(&motors[MOTOR_RIGHT1], (int32_t) wheelControlSignal[MOTOR_RIGHT1]);
         MotorControl_SetSpeed(&motors[MOTOR_RIGHT2], (int32_t) wheelControlSignal[MOTOR_RIGHT2]);
         MotorControl_SetSpeed(&motors[MOTOR_RIGHT3], (int32_t) wheelControlSignal[MOTOR_RIGHT3]);
-
-        vTaskDelayUntil(&xLastWakeTime, 20u);
     }
+
+    if (cycleCounter % 2 == 0)
+    {
+        HAL_UART_Receive_IT(&huart6,receiveBuffer,5);
+
+        if ((receiveBuffer[0] == 0xFF) && (receiveBuffer[1] <=100) && (receiveBuffer[2] <=180))
+        {
+            //referenceSpeedOrig = receiveBuffer[1] / 10.0;
+            //referenceSpeed = calcSpdRef_LUT(referenceSpeedOrig);
+            referenceSpeed = receiveBuffer[1] / 667.0;
+            referenceAngle = receiveBuffer[2] * 2.0;
+            buttonState = receiveBuffer[3];
+            messageCounter = receiveBuffer[4];
+            if (messageCounter != messageCounterPrev)
+            {
+                timeStamp = HAL_GetTick();
+                messageCounterPrev = messageCounter;
+            }
+        }
+
+        timeOutGuard = HAL_GetTick() - timeStamp;
+        if (timeOutGuard > timeOutGuardMax)
+        {
+            timeOutGuardMax = timeOutGuard;
+        }
+
+        if (timeOutGuard > 1000)
+        {
+            referenceSpeed = 0;
+            referenceAngle = 0;
+            buttonState = 0;
+        }
+    }
+  }
+  /* USER CODE END StartSensorTask */
+}
+
+/* USER CODE BEGIN Header_StartControlTask */
+/**
+* @brief Function implementing the controlTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartControlTask */
+void StartControlTask(void const * argument)
+{
+  /* USER CODE BEGIN StartControlTask */
+    vTaskSuspend(NULL);
   /* USER CODE END StartControlTask */
 }
 
@@ -1897,38 +1923,7 @@ void StartControlTask(void const * argument)
 void StartCommTask(void const * argument)
 {
   /* USER CODE BEGIN StartCommTask */
-  /* Infinite loop */
-  TickType_t xLastWakeTime = xTaskGetTickCount();
-  for(;;)
-  {
-    HAL_UART_Receive_IT(&huart6,receiveBuffer,5);
-    
-    if ((receiveBuffer[0] == 0xFF) && (receiveBuffer[1] <=100) && (receiveBuffer[2] <=180)){
-      //referenceSpeedOrig = receiveBuffer[1] / 10.0;
-      //referenceSpeed = calcSpdRef_LUT(referenceSpeedOrig);
-      referenceSpeed = receiveBuffer[1] / 667.0;
-      referenceAngle = receiveBuffer[2] * 2.0;
-      buttonState = receiveBuffer[3];
-      messageCounter = receiveBuffer[4];
-      if (messageCounter != messageCounterPrev){
-        timeStamp = HAL_GetTick();
-        messageCounterPrev = messageCounter;
-      }
-    }    
-    
-    timeOutGuard = HAL_GetTick() - timeStamp;
-    if (timeOutGuard > timeOutGuardMax){
-      timeOutGuardMax = timeOutGuard;
-    }
-    
-    if ((timeOutGuard) > 1000){
-      referenceSpeed = 0;
-      referenceAngle = 0;
-      buttonState = 0;
-    }
-    
-    vTaskDelayUntil(&xLastWakeTime, 20u);
-  }
+    vTaskSuspend(NULL);
   /* USER CODE END StartCommTask */
 }
 
