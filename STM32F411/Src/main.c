@@ -99,10 +99,20 @@ static volatile uint8_t mot4Dir = 0; //R1
 static volatile uint8_t mot5Dir = 0; //R2
 static volatile uint8_t mot6Dir = 0; //R3
 
+typedef struct {
+    const GPIO_TypeDef* port;
+    const uint16_t pin;
+} GPIO_t;
+
+#define GPIO_PIN(__port__, __pin__) {   \
+    .port = GPIO ## __port__,           \
+    .pin  = GPIO_PIN_ ## __pin__        \
+}
+
 typedef struct
 {
-    const GPIO_TypeDef* controlPort;
-    const uint16_t controlPin;
+    const GPIO_t control;
+    volatile uint32_t * const delayRegister;
 
     uint32_t counter;
     uint32_t start;
@@ -111,14 +121,14 @@ typedef struct
 
     uint16_t debounceCounter;
     float rawDistance;
-    float prevDistance;
+    float previousDistance;
     float filteredDistance;
 } Ultrasound_t;
 
-#define DEFINE_ULTRASOUND(ctrlPort, ctrlPin) \
+#define DEFINE_ULTRASOUND(ctrlPort, ctrlPin, timer) \
 {                                                               \
-    .controlPort = GPIO ## ctrlPort,                            \
-    .controlPin  = GPIO_PIN_ ## ctrlPin,                        \
+    .control = GPIO_PIN(ctrlPort, ctrlPin),                     \
+    .delayRegister = &(timer),                                  \
     .counter = 0u,                                              \
     .start = 0u,                                                \
     .end = 0u,                                                  \
@@ -131,10 +141,10 @@ typedef struct
 
 static Ultrasound_t sensors[4] =
 {
-    DEFINE_ULTRASOUND(A, 4),
-    DEFINE_ULTRASOUND(A, 5),
-    DEFINE_ULTRASOUND(C, 4),
-    DEFINE_ULTRASOUND(C, 5)
+    DEFINE_ULTRASOUND(A, 4, TIM10->CNT),
+    DEFINE_ULTRASOUND(A, 5, TIM10->CNT),
+    DEFINE_ULTRASOUND(C, 4, TIM10->CNT),
+    DEFINE_ULTRASOUND(C, 5, TIM10->CNT)
 };
 
 static void ultrasound_onSenseStart(Ultrasound_t* sensor, uint32_t counter)
@@ -155,6 +165,17 @@ static void ultrasound_onSenseEnd(Ultrasound_t* sensor, uint32_t counter)
     {
         sensor->length = (counter + 65536u) - sensor->start;
     }
+}
+
+static void ultrasound_startMeasurement(uint8_t sensorIdx)
+{
+    uint32_t currentTimerCounter = *(sensors[sensorIdx].delayRegister);
+    uint32_t targetCounter = currentTimerCounter + 2u;  /* +2 so the delay is between 10 and 20us */
+
+    /* Generate a trigger pulse between 10 and 20us (timer resolution limit) */
+    HAL_GPIO_WritePin(sensors[sensorIdx].control.port, sensors[sensorIdx].control.pin, GPIO_PIN_SET);
+    while (*(sensors[sensorIdx].delayRegister) != targetCounter);
+    HAL_GPIO_WritePin(sensors[sensorIdx].control.port, sensors[sensorIdx].control.pin, GPIO_PIN_RESET);
 }
 
 static volatile float batteryVoltage1 = 0;
@@ -1609,16 +1630,11 @@ void StartSensorTask(void const * argument)
     mot5CntrPrev = mot5Cntr;
     mot6CntrPrev = mot6Cntr;
     
-    for (uint8_t i = 0u; i < sizeof(sensors) / sizeof(sensors[0]); i++)
+    if (cycleCounter <= 6 && (cycleCounter % 2) == 0)
     {
-        if (cycleCounter % 10 == 2 * i)
-        {
-            uint32_t currentTimerCounter = TIM10->CNT;
-            uint32_t targetCounter = currentTimerCounter + 2u;  //+2 so the delay is between 10 and 20us
-            HAL_GPIO_WritePin(sensors[i].controlPort, sensors[i].controlPin, GPIO_PIN_SET); //SEN1 trigger
-            while (TIM10->CNT != targetCounter);
-            HAL_GPIO_WritePin(sensors[i].controlPort, sensors[i].controlPin, GPIO_PIN_RESET); //SEN1 trigger
-        }
+        uint8_t sensorIdx = cycleCounter / 2;
+
+        ultrasound_startMeasurement(sensorIdx);
     }
 
     if (cycleCounter % 4 == 0){
@@ -2072,7 +2088,7 @@ void StartApplicationTask(void const * argument)
     calculateLRSpeeds(referenceSpeed, referenceAngle);
     processButtons(buttonState);
 
-    vTaskDelayUntil(10u);
+    vTaskDelayUntil(&xLastWakeTime, 10u);
   }
   /* USER CODE END StartApplicationTask */
 }
