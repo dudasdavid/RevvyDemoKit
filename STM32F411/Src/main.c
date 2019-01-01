@@ -178,6 +178,75 @@ static void ultrasound_startMeasurement(uint8_t sensorIdx)
     HAL_GPIO_WritePin(sensors[sensorIdx].control.port, sensors[sensorIdx].control.pin, GPIO_PIN_RESET);
 }
 
+typedef struct {
+    const GPIO_t ctrlA;
+    const GPIO_t ctrlB;
+    volatile uint32_t * const speedControlRegister;
+} MotorControl_t;
+
+#define MOTOR_LEFT1 (0u)
+#define MOTOR_LEFT2 (1u)
+#define MOTOR_LEFT3 (2u)
+
+#define MOTOR_RIGHT1 (3u)
+#define MOTOR_RIGHT2 (4u)
+#define MOTOR_RIGHT3 (5u)
+
+static const MotorControl_t motors[] =
+{
+    /* Left side motors */
+    {
+        .ctrlA = GPIO_PIN(B, 15),
+        .ctrlB = GPIO_PIN(D, 11),
+        .speedControlRegister = &(TIM1->CCR1)
+    },
+    {
+        .ctrlA = GPIO_PIN(C, 13),
+        .ctrlB = GPIO_PIN(C, 14),
+        .speedControlRegister = &(TIM1->CCR2)
+    },
+    {
+        .ctrlA = GPIO_PIN(C, 10),
+        .ctrlB = GPIO_PIN(C, 11),
+        .speedControlRegister = &(TIM1->CCR3)
+    },
+
+    /* Right side motors */
+    {
+        .ctrlA = GPIO_PIN(A, 6),
+        .ctrlB = GPIO_PIN(A, 7),
+        .speedControlRegister = &(TIM1->CCR4)
+    },
+    {
+        .ctrlA = GPIO_PIN(A,  9),
+        .ctrlB = GPIO_PIN(A, 10),
+        .speedControlRegister = &(TIM2->CCR1)
+    },
+    {
+        .ctrlA = GPIO_PIN(D, 12),
+        .ctrlB = GPIO_PIN(D, 13),
+        .speedControlRegister = &(TIM2->CCR2)
+    }
+};
+
+static void MotorControl_SetSpeed(const MotorControl_t* motor, int32_t speed)
+{
+    const uint32_t motorScaling = 4800 / 100;
+
+    if (speed >= 0)
+    {
+        HAL_GPIO_WritePin(motor->ctrlA.port, motor->ctrlA.pin, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(motor->ctrlB.port, motor->ctrlB.pin, GPIO_PIN_RESET);
+        *(motor->speedControlRegister) = speed * motorScaling;
+    }
+    else
+    {
+        HAL_GPIO_WritePin(motor->ctrlA.port, motor->ctrlA.pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(motor->ctrlB.port, motor->ctrlB.pin, GPIO_PIN_SET);
+        *(motor->speedControlRegister) = -speed * motorScaling;
+    }
+}
+
 static volatile float batteryVoltage1 = 0;
 static volatile float batteryVoltage2 = 0;
 
@@ -1802,69 +1871,15 @@ void StartControlTask(void const * argument)
     wheelR1SumControl = saturateFloat(wheelR1SumControl, -maxDutyCycle, maxDutyCycle);
     wheelR2SumControl = saturateFloat(wheelR2SumControl, -maxDutyCycle, maxDutyCycle);
     wheelR3SumControl = saturateFloat(wheelR3SumControl, -maxDutyCycle, maxDutyCycle);
+
+    MotorControl_SetSpeed(&motors[MOTOR_LEFT1], (int32_t) wheelL1SumControl);
+    MotorControl_SetSpeed(&motors[MOTOR_LEFT2], (int32_t) wheelL2SumControl);
+    MotorControl_SetSpeed(&motors[MOTOR_LEFT3], (int32_t) wheelL3SumControl);
     
-    if (wheelL1SumControl>=0){
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET); //LEFT1 FW
-      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, GPIO_PIN_RESET); //LEFT1 RW
-    }
-    else {
-      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET); //LEFT1 FW
-      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, GPIO_PIN_SET); //LEFT1 RW
-    }
-    TIM1->CCR1 = abs((int)wheelL1SumControl)*4800/100; //LEFT1
-    
-    if (wheelL2SumControl>=0){
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET); //LEFT2 FW
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET); //LEFT2 RW
-    }
-    else {
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET); //LEFT2 FW
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_SET); //LEFT2 RW
-    }
-    TIM1->CCR2 = abs((int)wheelL2SumControl)*4800/100; //LEFT2
-    
-    if (wheelL3SumControl>=0){
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_SET); //LEFT3 FW
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_RESET); //LEFT3 RW
-    }
-    else {
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_10, GPIO_PIN_RESET); //LEFT3 FW
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_11, GPIO_PIN_SET); //LEFT3 RW
-    }
-    TIM1->CCR3 = abs((int)wheelL3SumControl)*4800/100; //LEFT3
-    
-    if (wheelR1SumControl>=0){
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6,  GPIO_PIN_SET); //RIGHT1 FW
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7,  GPIO_PIN_RESET); //RIGHT1 RW
-    }
-    else {
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_6,  GPIO_PIN_RESET); //RIGHT1 FW
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_7,  GPIO_PIN_SET); //RIGHT1 RW
-    }
-    TIM1->CCR4 = abs((int)wheelR1SumControl)*4800/100; //RIGHT1
-    
-    if (wheelR2SumControl>=0){
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9,  GPIO_PIN_SET); //RIGHT2 FW
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_RESET); //RIGHT2 RW
-    }
-    else {
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9,  GPIO_PIN_RESET); //RIGHT2 FW
-      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_10, GPIO_PIN_SET); //RIGHT2 RW
-    }
-    TIM2->CCR1 = abs((int)wheelR2SumControl)*4800/100; //RIGHT2
-    
-    if (wheelR2SumControl>=0){
-      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET); //RIGHT3 FW
-      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET); //RIGHT3 RW
-    }
-    else {
-      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_RESET); //RIGHT3 FW
-      HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_SET); //RIGHT3 RW
-    }
-    TIM2->CCR3 = abs((int)wheelR3SumControl)*4800/100; //RIGHT3
-    
-    
-    
+    MotorControl_SetSpeed(&motors[MOTOR_RIGHT1], (int32_t) wheelR1SumControl);
+    MotorControl_SetSpeed(&motors[MOTOR_RIGHT2], (int32_t) wheelR2SumControl);
+    MotorControl_SetSpeed(&motors[MOTOR_RIGHT3], (int32_t) wheelR3SumControl);
+
     currSpeedLeft = nextSpeedLeft;
     currSpeedRight = nextSpeedRight;
 
