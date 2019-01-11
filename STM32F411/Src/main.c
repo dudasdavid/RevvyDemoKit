@@ -149,8 +149,11 @@ static volatile float wheelR2RawVelocity_mps, wheelR2FiltVelocity_mps, wheelR2Fi
 static volatile float wheelR3RawVelocity_mps, wheelR3FiltVelocity_mps, wheelR3FiltVelocity_rpm = 0;
 
 static volatile float wheelSize_m = 0.20; // 20cm circumference
-static volatile uint16_t encoderSignalsPerRound = 360; // 3 counts per motor round and a 120:1 gearbox
+//static volatile uint16_t encoderSignalsPerRound = 360; // 3 counts per motor round and a 120:1 gearbox
+static volatile uint16_t encoderSignalsPerRound = 144; // 3 counts per motor round and a 48:1 gearbox
 static volatile uint16_t speedSensingTaskCycle_ms = 10; // 10ms task cycle time
+//static volatile float maxVelocity = 0.15; // for the 120:1 gears!
+static volatile float maxVelocity = 0.3; // for the 48:1 gears!
 
 static volatile float referenceSpeedLeft = 0;
 static volatile float referenceSpeedRight = 0;
@@ -175,10 +178,10 @@ static volatile float wheelR2VelocityError, wheelR2VelocityErrorBefore, wheelR2V
 static volatile float wheelR3VelocityError, wheelR3VelocityErrorBefore, wheelR3VelocityIntError, wheelR3VelocityDerivatedError, wheelR3SumControl, wheelR3SumControlBeforeSaturation = 0;
 
 static volatile float maxDutyCycle = 100;
-static volatile float antiWindup = 0.004;
-static volatile float ctrlP = 750;
-static volatile float ctrlI = 10;
-static volatile float ctrlD = 0;
+static volatile float antiWindup = 0.01;//0.004;
+static volatile float ctrlP = 400;//750;
+static volatile float ctrlI = 8;//10;
+static volatile float ctrlD = 2;
 
 static volatile float positionErrorL3_deg = 0;
 static volatile float referenceAngleL3_deg = 0;
@@ -1457,80 +1460,80 @@ void StartSensorTask(void const * argument)
     
     if ((mot1Cntr - mot1CntrPrev) > 32000){
       wheelL1Odometer_m += (mot1Cntr - 65535 - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL1Angle_deg += (mot1Cntr - 65535 - mot1CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelL1Angle_deg += (mot1Cntr - 65535 - mot1CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else if ((mot1Cntr - mot1CntrPrev) < -32000){
       wheelL1Odometer_m += (mot1Cntr + 65535 - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL1Angle_deg += (mot1Cntr + 65535 - mot1CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelL1Angle_deg += (mot1Cntr + 65535 - mot1CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else {
       wheelL1Odometer_m += (mot1Cntr - mot1CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL1Angle_deg += (mot1Cntr - mot1CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelL1Angle_deg += (mot1Cntr - mot1CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     
     if ((mot2Cntr - mot2CntrPrev) > 32000){
       wheelL2Odometer_m += (mot2Cntr - 65535 - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL2Angle_deg += (mot2Cntr - 65535 - mot2CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelL2Angle_deg += (mot2Cntr - 65535 - mot2CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else if ((mot2Cntr - mot2CntrPrev) < -32000){
       wheelL2Odometer_m += (mot2Cntr + 65535 - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL2Angle_deg += (mot2Cntr + 65535 - mot2CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelL2Angle_deg += (mot2Cntr + 65535 - mot2CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else {
       wheelL2Odometer_m += (mot2Cntr - mot2CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL2Angle_deg += (mot2Cntr - mot2CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelL2Angle_deg += (mot2Cntr - mot2CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     
     if ((mot3Cntr - mot3CntrPrev) > 32000){
       wheelL3Odometer_m += (mot3Cntr - 65535 - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL3Angle_deg += (mot3Cntr - 65535 - mot3CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelL3Angle_deg += (mot3Cntr - 65535 - mot3CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else if ((mot3Cntr - mot3CntrPrev) < -32000){
       wheelL3Odometer_m += (mot3Cntr + 65535 - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL3Angle_deg += (mot3Cntr + 65535 - mot3CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelL3Angle_deg += (mot3Cntr + 65535 - mot3CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else {
       wheelL3Odometer_m += (mot3Cntr - mot3CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelL3Angle_deg += (mot3Cntr - mot3CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelL3Angle_deg += (mot3Cntr - mot3CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     
     if ((mot4Cntr - mot4CntrPrev) > 32000){
       wheelR1Odometer_m += (mot4Cntr - 65535 - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR1Angle_deg += (mot4Cntr - 65535 - mot4CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelR1Angle_deg += (mot4Cntr - 65535 - mot4CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else if ((mot4Cntr - mot4CntrPrev) < -32000){
       wheelR1Odometer_m += (mot4Cntr + 65535 - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR1Angle_deg += (mot4Cntr + 65535 - mot4CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelR1Angle_deg += (mot4Cntr + 65535 - mot4CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else {
       wheelR1Odometer_m += (mot4Cntr - mot4CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR1Angle_deg += (mot4Cntr - mot4CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelR1Angle_deg += (mot4Cntr - mot4CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     
     if ((mot5Cntr - mot5CntrPrev) > 32000){
       wheelR2Odometer_m += (mot5Cntr - 65535 - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR2Angle_deg += (mot5Cntr - 65535 - mot5CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelR2Angle_deg += (mot5Cntr - 65535 - mot5CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else if ((mot5Cntr - mot5CntrPrev) < -32000){
       wheelR2Odometer_m += (mot5Cntr + 65535 - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR2Angle_deg += (mot5Cntr + 65535 - mot5CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelR2Angle_deg += (mot5Cntr + 65535 - mot5CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else {
       wheelR2Odometer_m += (mot5Cntr - mot5CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR2Angle_deg += (mot5Cntr - mot5CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelR2Angle_deg += (mot5Cntr - mot5CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     
     if ((mot6Cntr - mot6CntrPrev) > 32000){
       wheelR3Odometer_m += (mot6Cntr - 65535 - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR3Angle_deg += (mot6Cntr - 65535 - mot6CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelR3Angle_deg += (mot6Cntr - 65535 - mot6CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else if ((mot6Cntr - mot6CntrPrev) < -32000){
       wheelR3Odometer_m += (mot6Cntr + 65535 - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR3Angle_deg += (mot6Cntr + 65535 - mot6CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelR3Angle_deg += (mot6Cntr + 65535 - mot6CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     else {
       wheelR3Odometer_m += (mot6Cntr - mot6CntrPrev) * wheelSize_m / encoderSignalsPerRound;
-      wheelR3Angle_deg += (mot6Cntr - mot6CntrPrev) * 360 / encoderSignalsPerRound;
+      wheelR3Angle_deg += (mot6Cntr - mot6CntrPrev) * 360.0 / encoderSignalsPerRound;
     }
     
     wheelL1RawVelocity_mps = (wheelL1Odometer_m - wheelL1Odometer_m_prev) * 1000.0 / speedSensingTaskCycle_ms;
@@ -1766,6 +1769,7 @@ void StartControlTask(void const * argument)
     saturateVolatileFloat(&wheelR2SumControl, -maxDutyCycle, maxDutyCycle);
     saturateVolatileFloat(&wheelR3SumControl, -maxDutyCycle, maxDutyCycle);
     
+    
     if (wheelL1SumControl>=0){
       HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET); //LEFT1 FW
       HAL_GPIO_WritePin(GPIOD, GPIO_PIN_11, GPIO_PIN_RESET); //LEFT1 RW
@@ -1854,7 +1858,7 @@ void StartCommTask(void const * argument)
     if ((receiveBuffer[0] == 0xFF) && (receiveBuffer[1] <=100) && (receiveBuffer[2] <=180)){
       //referenceSpeedOrig = receiveBuffer[1] / 10.0;
       //referenceSpeed = calcSpdRef_LUT(referenceSpeedOrig);
-      referenceSpeed = receiveBuffer[1] / 667.0;
+      referenceSpeed = receiveBuffer[1] / (100 / maxVelocity);
       referenceAngle = receiveBuffer[2] * 2.0;
       buttonState = receiveBuffer[3];
       messageCounter = receiveBuffer[4];
@@ -2020,7 +2024,7 @@ void StartApplicationTask(void const * argument)
   {
     if (autonomousActive){
       referenceAngle = 90;
-      referenceSpeed = 0.08;
+      referenceSpeed = 0.2;
     }
     
     if (((sen1DistanceFiltered < 20) && (sen1DebounceCounter < ultrasonicDebounceLimit)) || ((sen2DistanceFiltered < 20) && (sen2DebounceCounter < ultrasonicDebounceLimit)) || ((sen3DistanceFiltered < 20) && (sen3DebounceCounter < ultrasonicDebounceLimit)) || ((sen4DistanceFiltered < 20) && (sen4DebounceCounter < ultrasonicDebounceLimit))){
@@ -2036,7 +2040,7 @@ void StartApplicationTask(void const * argument)
     if ((sen1AnalogValue > 100) || (sen2AnalogValue > 100) || (sen3AnalogValue > 100) || (sen4AnalogValue > 100)){
       bumperActive = 1;
       referenceAngle = 90;
-      referenceSpeed = 0.05;
+      referenceSpeed = 0.2;
     }
     else {
       bumperActive = 0;
