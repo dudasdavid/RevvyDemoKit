@@ -23,9 +23,9 @@
 
 if ($debugfile -eq "")
 {
-& "C:\Program Files (x86)\IAR Systems\Embedded Workbench 8.0\common\bin\cspybat" -f "C:\GIT\RevvyDemoKit\STM32F411\EWARM\settings\RevvyDemo.RevvyDemo.general.xcl" --backend -f "C:\GIT\RevvyDemoKit\STM32F411\EWARM\settings\RevvyDemo.RevvyDemo.driver.xcl" 
+& "C:\Program Files (x86)\IAR Systems\Embedded Workbench 8.2\common\bin\cspybat" -f "C:\GIT\RevvyDemoKit\STM32F411\EWARM\settings\RevvyDemo.RevvyDemo.general.xcl" --backend -f "C:\GIT\RevvyDemoKit\STM32F411\EWARM\settings\RevvyDemo.RevvyDemo.driver.xcl" 
 }
 else
 {
-& "C:\Program Files (x86)\IAR Systems\Embedded Workbench 8.0\common\bin\cspybat" -f "C:\GIT\RevvyDemoKit\STM32F411\EWARM\settings\RevvyDemo.RevvyDemo.general.xcl" --debug_file=$debugfile --backend -f "C:\GIT\RevvyDemoKit\STM32F411\EWARM\settings\RevvyDemo.RevvyDemo.driver.xcl" 
+& "C:\Program Files (x86)\IAR Systems\Embedded Workbench 8.2\common\bin\cspybat" -f "C:\GIT\RevvyDemoKit\STM32F411\EWARM\settings\RevvyDemo.RevvyDemo.general.xcl" --debug_file=$debugfile --backend -f "C:\GIT\RevvyDemoKit\STM32F411\EWARM\settings\RevvyDemo.RevvyDemo.driver.xcl" 
 }
