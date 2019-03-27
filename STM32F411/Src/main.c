@@ -153,7 +153,7 @@ static volatile float wheelSize_m = 0.20; // 20cm circumference
 static volatile uint16_t encoderSignalsPerRound = 144; // 3 counts per motor round and a 48:1 gearbox
 static volatile uint16_t speedSensingTaskCycle_ms = 10; // 10ms task cycle time
 //static volatile float maxVelocity = 0.15; // for the 120:1 gears!
-static volatile float maxVelocity = 0.3; // for the 48:1 gears!
+static volatile float maxVelocity = 0.5; // for the 48:1 gears!
 
 static volatile float referenceSpeedLeft = 0;
 static volatile float referenceSpeedRight = 0;
@@ -185,7 +185,10 @@ static volatile float ctrlD = 2;
 
 static volatile float positionErrorL3_deg = 0;
 static volatile float referenceAngleL3_deg = 0;
-static volatile float ctrlP_pos = 0.01;
+static volatile float positionErrorR3_deg = 0;
+static volatile float referenceAngleR3_deg = 0;
+static volatile float ctrlP_pos = 0.004;
+static volatile float angleIncrement = 0.5;
 
 static volatile uint16_t ultrasonicDebounceLimit = 50;
 static volatile uint8_t ultrasonicActive = 0;
@@ -1335,10 +1338,16 @@ void calculateLRSpeeds(float r, float phi) {
 
 void processButtons(uint8_t buttons){
   if ((buttons & 0x01) == 0x01){
-    referenceAngleL3_deg += 1;
+    referenceAngleL3_deg += angleIncrement;
   }
   if ((buttons & 0x04) == 0x04){
-    referenceAngleL3_deg -= 1;
+    referenceAngleL3_deg -= angleIncrement;
+  }
+  if ((buttons & 0x02) == 0x02){
+    referenceAngleR3_deg += angleIncrement;
+  }
+  if ((buttons & 0x08) == 0x08){
+    referenceAngleR3_deg -= angleIncrement;
   }
   
   if ((buttons & 0x10) == 0x10){
@@ -1744,8 +1753,10 @@ void StartControlTask(void const * argument)
     wheelR2SumControl = (int)(ctrlP * wheelR2VelocityError + ctrlI * wheelR2VelocityIntError + ctrlD * wheelR2VelocityDerivatedError);
     wheelR2SumControlBeforeSaturation = wheelR2SumControl;
     
+    positionErrorR3_deg = referenceAngleR3_deg - wheelR3Angle_deg;
+    
     wheelR3VelocityErrorBefore = wheelR3VelocityError;
-    wheelR3VelocityError = nextSpeedRight - wheelR3FiltVelocity_mps;
+    wheelR3VelocityError = (positionErrorR3_deg * ctrlP_pos) - wheelR3FiltVelocity_mps;
     wheelR3VelocityIntError = wheelR3VelocityIntError + wheelR3VelocityError + antiWindup * (wheelR3SumControl - wheelR3SumControlBeforeSaturation);
     wheelR3VelocityDerivatedError = wheelR3VelocityError - wheelR3VelocityErrorBefore;
     wheelR3SumControl = (int)(ctrlP * wheelR3VelocityError + ctrlI * wheelR3VelocityIntError + ctrlD * wheelR3VelocityDerivatedError);
@@ -1820,7 +1831,7 @@ void StartControlTask(void const * argument)
     }
     TIM2->CCR1 = abs((int)wheelR2SumControl)*4800/100; //RIGHT2
     
-    if (wheelR2SumControl>=0){
+    if (wheelR3SumControl>=0){
       HAL_GPIO_WritePin(GPIOD, GPIO_PIN_12, GPIO_PIN_SET); //RIGHT3 FW
       HAL_GPIO_WritePin(GPIOD, GPIO_PIN_13, GPIO_PIN_RESET); //RIGHT3 RW
     }
