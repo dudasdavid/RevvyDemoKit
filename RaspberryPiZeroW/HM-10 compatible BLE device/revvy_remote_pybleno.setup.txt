@@ -1,0 +1,19 @@
+	# enable SSH for tweaking. Probably should be disabled at the end.
+sudo systemctl enable ssh
+sudo systemctl start ssh
+# ttyS0
+sudo systemctl mask serial-getty@ttyAMA0.service
+# enable raw sockets for python for BT
+sudo setcap 'cap_net_raw,cap_net_admin+eip' $(readlink -f $(which python3))
+# enable tty
+echo "enable_uart=1" | sudo tee -a /boot/config.txt
+# NOTE: Change default password?
+mkdir test
+cd test
+git clone https://github.com/vhermecz/pybleno
+cd pybleno
+git checkout vhermecz-patch-1
+python3 setup.py install --user
+cd ..
+wget https://raw.githubusercontent.com/vhermecz/RevvyDemoKit/master/RaspberryPiZeroW/HM-10%20compatible%20BLE%20device/revvy_remote_pybleno.py
+python3 revvy_remote_pybleno.py
