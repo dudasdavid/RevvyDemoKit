@@ -25,7 +25,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>This app uses bluetooth to send and receive messages to/from the connected HM10 module.</string>
+	<string>Bluetooth is used for communicating with the robot</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Bluetooth is used for communicating with the robot</string>
 	<key>UILaunchStoryboardName</key>
 	<string>Launch Screen</string>
 	<key>UIMainStoryboardFile</key>
