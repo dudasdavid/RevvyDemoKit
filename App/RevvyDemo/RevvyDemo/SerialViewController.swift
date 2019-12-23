@@ -45,6 +45,19 @@ let centerPointFeeling = CGFloat(5)
 
 var sendLength = Int(0)
 var sendAngle = Int(0)
+var sendButton = Int(0)
+
+let ACircle = CAShapeLayer()
+let BCircle = CAShapeLayer()
+let CCircle = CAShapeLayer()
+let DCircle = CAShapeLayer()
+
+var AState = Int(0)
+var BState = Int(0)
+var CState = Int(0)
+var DState = Int(0)
+var switchState = Int(0)
+var aliveCounter = Int(0)
 
 final class SerialViewController: UIViewController, UITextFieldDelegate, BluetoothSerialDelegate {
 
@@ -57,6 +70,14 @@ final class SerialViewController: UIViewController, UITextFieldDelegate, Bluetoo
     @IBOutlet weak var barButton: UIBarButtonItem!
     @IBOutlet weak var navItem: UINavigationItem!
     @IBOutlet weak var infoText: UITextView!
+    @IBAction func Switch1(_ sender: UISwitch) {
+        if (sender.isOn == true){
+            switchState = 1
+        }
+        else {
+            switchState = 0
+        }
+    }
     
 
 //MARK: Functions
@@ -90,12 +111,17 @@ final class SerialViewController: UIViewController, UITextFieldDelegate, Bluetoo
         bottomView.layer.shadowColor = UIColor.gray.cgColor
         
         scheduledTimerWithTimeInterval()
-        addLine(line: baseHorizontalLine, fromPoint: CGPoint(x: baseXOffset, y: baseYOffset + baseHeight/2), toPoint: CGPoint(x: baseXOffset+baseWidth, y: baseYOffset + baseHeight/2))
-        addLine(line: baseVerticalLine, fromPoint: CGPoint(x: baseXOffset+baseWidth/2, y: baseYOffset), toPoint: CGPoint(x: baseXOffset+baseWidth/2, y: baseYOffset+baseHeight))
-        addLine(line: targetHorizontalLine, fromPoint: CGPoint(x: baseXOffset, y: baseYOffset + baseHeight/2), toPoint: CGPoint(x: baseXOffset+baseWidth, y: baseYOffset + baseHeight/2))
-        addLine(line: targetVerticalLine, fromPoint: CGPoint(x: baseXOffset+baseWidth/2, y: baseYOffset), toPoint: CGPoint(x: baseXOffset+baseWidth/2, y: baseYOffset+baseHeight))
-        addCircle(circle: baseCircle, center: CGPoint(x:baseXOffset+baseWidth/2, y:baseYOffset + baseHeight/2), r: CGFloat(baseWidth/2), fill: false)
-        addCircle(circle: targetCircle, center: CGPoint(x:baseXOffset+baseWidth/2, y:baseYOffset + baseHeight/2), r: CGFloat(buttonSize), fill: true)
+        addLine(line: baseHorizontalLine, fromPoint: CGPoint(x: baseXOffset, y: baseYOffset + baseHeight/2), toPoint: CGPoint(x: baseXOffset+baseWidth, y: baseYOffset + baseHeight/2), color: UIColor.black)
+        addLine(line: baseVerticalLine, fromPoint: CGPoint(x: baseXOffset+baseWidth/2, y: baseYOffset), toPoint: CGPoint(x: baseXOffset+baseWidth/2, y: baseYOffset+baseHeight), color: UIColor.black)
+        addLine(line: targetHorizontalLine, fromPoint: CGPoint(x: baseXOffset, y: baseYOffset + baseHeight/2), toPoint: CGPoint(x: baseXOffset+baseWidth, y: baseYOffset + baseHeight/2), color: UIColor.red)
+        addLine(line: targetVerticalLine, fromPoint: CGPoint(x: baseXOffset+baseWidth/2, y: baseYOffset), toPoint: CGPoint(x: baseXOffset+baseWidth/2, y: baseYOffset+baseHeight), color: UIColor.red)
+        addCircle(circle: baseCircle, center: CGPoint(x:baseXOffset+baseWidth/2, y:baseYOffset + baseHeight/2), r: CGFloat(baseWidth/2), fill: false, color: UIColor.red)
+        addCircle(circle: targetCircle, center: CGPoint(x:baseXOffset+baseWidth/2, y:baseYOffset + baseHeight/2), r: CGFloat(buttonSize), fill: true, color: UIColor.black)
+        
+        addCircle(circle: ACircle, center: CGPoint(x:630, y:100), r: CGFloat(30), fill: true, color: UIColor.black)
+        addCircle(circle: BCircle, center: CGPoint(x:710, y:190), r: CGFloat(30), fill: true, color: UIColor.black)
+        addCircle(circle: CCircle, center: CGPoint(x:630, y:280), r: CGFloat(30), fill: true, color: UIColor.black)
+        addCircle(circle: DCircle, center: CGPoint(x:550, y:190), r: CGFloat(30), fill: true, color: UIColor.black)
         
     }
     
@@ -118,31 +144,98 @@ final class SerialViewController: UIViewController, UITextFieldDelegate, Bluetoo
         
         location = touch.location(in: self.view)
         
-        joyXvalue = location.x-(baseXOffset+baseWidth/2)
-        joyYvalue = location.y-(baseYOffset+baseHeight/2)
+        if (location.x <= 350){
         
-        let joyRPhi = XY2RPhi(x: joyXvalue, y: joyYvalue)
-        joyRvalue = joyRPhi.r
-        joyPhivalue = joyRPhi.phi
-        
-        if (joyRvalue < centerPointFeeling){
-            joyRvalue = 0
-            joyXvalue = 0
-            joyYvalue = 0
-        }
-        
-        if (joyRvalue > baseWidth/2 - buttonSize){
-            joyRvalue = baseWidth/2 - buttonSize
-            let joyXY = RPhi2XY(r: joyRvalue, phi: joyPhivalue)
-            joyXvalue = joyXY.x
-            joyYvalue = joyXY.y
-        }
-        
-        UIView.animate(withDuration: 0, delay: 0, options: [.repeat, .curveLinear], animations: {
+            joyXvalue = location.x-(baseXOffset+baseWidth/2)
+            joyYvalue = location.y-(baseYOffset+baseHeight/2)
+            
+            let joyRPhi = XY2RPhi(x: joyXvalue, y: joyYvalue)
+            joyRvalue = joyRPhi.r
+            joyPhivalue = joyRPhi.phi
+            
+            if (joyRvalue < centerPointFeeling){
+                joyRvalue = 0
+                joyXvalue = 0
+                joyYvalue = 0
+            }
+            
+            if (joyRvalue > baseWidth/2 - buttonSize){
+                joyRvalue = baseWidth/2 - buttonSize
+                let joyXY = RPhi2XY(r: joyRvalue, phi: joyPhivalue)
+                joyXvalue = joyXY.x
+                joyYvalue = joyXY.y
+            }
+            
             targetHorizontalLine.frame.origin = CGPoint(x: targetHorizontalLine.frame.origin.x, y: joyYvalue)
             targetVerticalLine.frame.origin = CGPoint(x: joyXvalue, y: targetVerticalLine.frame.origin.y)
             targetCircle.frame.origin = CGPoint(x: joyXvalue, y: joyYvalue)
-        }, completion: nil)
+            targetCircle.fillColor = UIColor.red.cgColor
+            targetCircle.strokeColor = UIColor.red.cgColor
+
+        }
+        else{
+            if ((location.x>=590) && (location.x<=670) && (location.y>=60) && (location.y<=140)){
+                ACircle.fillColor = UIColor.red.cgColor
+                ACircle.strokeColor = UIColor.red.cgColor
+                AState = 1
+                
+                BCircle.fillColor = UIColor.black.cgColor
+                BCircle.strokeColor = UIColor.black.cgColor
+                CCircle.fillColor = UIColor.black.cgColor
+                CCircle.strokeColor = UIColor.black.cgColor
+                DCircle.fillColor = UIColor.black.cgColor
+                DCircle.strokeColor = UIColor.black.cgColor
+                BState = 0
+                CState = 0
+                DState = 0
+            }
+            if ((location.x>=680) && (location.x<=760) && (location.y>=140) && (location.y<=220)){
+                BCircle.fillColor = UIColor.red.cgColor
+                BCircle.strokeColor = UIColor.red.cgColor
+                BState = 1
+                
+                ACircle.fillColor = UIColor.black.cgColor
+                ACircle.strokeColor = UIColor.black.cgColor
+                CCircle.fillColor = UIColor.black.cgColor
+                CCircle.strokeColor = UIColor.black.cgColor
+                DCircle.fillColor = UIColor.black.cgColor
+                DCircle.strokeColor = UIColor.black.cgColor
+                AState = 0
+                CState = 0
+                DState = 0
+            }
+            if ((location.x>=590) && (location.x<=670) && (location.y>=230) && (location.y<=310)){
+                CCircle.fillColor = UIColor.red.cgColor
+                CCircle.strokeColor = UIColor.red.cgColor
+                CState = 1
+                
+                BCircle.fillColor = UIColor.black.cgColor
+                BCircle.strokeColor = UIColor.black.cgColor
+                ACircle.fillColor = UIColor.black.cgColor
+                ACircle.strokeColor = UIColor.black.cgColor
+                DCircle.fillColor = UIColor.black.cgColor
+                DCircle.strokeColor = UIColor.black.cgColor
+                BState = 0
+                AState = 0
+                DState = 0
+            }
+            if ((location.x>=520) && (location.x<=600) && (location.y>=140) && (location.y<=220)){
+                DCircle.fillColor = UIColor.red.cgColor
+                DCircle.strokeColor = UIColor.red.cgColor
+                DState = 1
+                
+                BCircle.fillColor = UIColor.black.cgColor
+                BCircle.strokeColor = UIColor.black.cgColor
+                CCircle.fillColor = UIColor.black.cgColor
+                CCircle.strokeColor = UIColor.black.cgColor
+                ACircle.fillColor = UIColor.black.cgColor
+                ACircle.strokeColor = UIColor.black.cgColor
+                BState = 0
+                CState = 0
+                AState = 0
+            }
+            
+        }
     }
     
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -151,41 +244,54 @@ final class SerialViewController: UIViewController, UITextFieldDelegate, Bluetoo
         joyXvalue = 0
         joyYvalue = 0
         
-        UIView.animate(withDuration: 0, delay: 0, options: [.repeat, .curveLinear], animations: {
-            targetHorizontalLine.frame.origin = CGPoint(x: 0, y: 0)
-            targetVerticalLine.frame.origin = CGPoint(x: 0, y: 0)
-            targetCircle.frame.origin = CGPoint(x: 0, y: 0)
-        }, completion: nil)
+        AState = 0
+        BState = 0
+        CState = 0
+        DState = 0
+        
+        targetHorizontalLine.frame.origin = CGPoint(x: 0, y: 0)
+        targetVerticalLine.frame.origin = CGPoint(x: 0, y: 0)
+        targetCircle.frame.origin = CGPoint(x: 0, y: 0)
+        targetCircle.fillColor = UIColor.black.cgColor
+        targetCircle.strokeColor = UIColor.black.cgColor
+        ACircle.fillColor = UIColor.black.cgColor
+        ACircle.strokeColor = UIColor.black.cgColor
+        BCircle.fillColor = UIColor.black.cgColor
+        BCircle.strokeColor = UIColor.black.cgColor
+        CCircle.fillColor = UIColor.black.cgColor
+        CCircle.strokeColor = UIColor.black.cgColor
+        DCircle.fillColor = UIColor.black.cgColor
+        DCircle.strokeColor = UIColor.black.cgColor
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
     
-    func addLine(line: CAShapeLayer, fromPoint start: CGPoint, toPoint end:CGPoint) {
+    func addLine(line: CAShapeLayer, fromPoint start: CGPoint, toPoint end:CGPoint, color: UIColor) {
         //let line = CAShapeLayer()
         let linePath = UIBezierPath()
         linePath.move(to: start)
         linePath.addLine(to: end)
         line.path = linePath.cgPath
-        line.strokeColor = UIColor.red.cgColor
+        line.strokeColor = color.cgColor
         line.lineWidth = 1
         line.lineJoin = CAShapeLayerLineJoin.round
         self.view.layer.addSublayer(line)
     }
     
-    func addCircle(circle: CAShapeLayer, center: CGPoint, r: CGFloat, fill: Bool){
+    func addCircle(circle: CAShapeLayer, center: CGPoint, r: CGFloat, fill: Bool, color: UIColor){
         let circlePath = UIBezierPath(arcCenter: center, radius: r, startAngle: CGFloat(0), endAngle:CGFloat(Double.pi * 2), clockwise: true)
         circle.path = circlePath.cgPath
         //change the fill color
         if (fill == true){
-            circle.fillColor = UIColor.red.cgColor
+            circle.fillColor = color.cgColor
         }  
         else {
             circle.fillColor = UIColor.clear.cgColor
         }
         //you can change the stroke color
-        circle.strokeColor = UIColor.red.cgColor
+        circle.strokeColor = color.cgColor
         //you can change the line width
         circle.lineWidth = 3.0
         
@@ -227,10 +333,14 @@ final class SerialViewController: UIViewController, UITextFieldDelegate, Bluetoo
         sendLength = Int(joyRvalue * 100 / (baseWidth/2 - buttonSize))
         sendAngle = Int(joyPhivalue * 180 / 2 / CGFloat.pi)
         
-        infoText.text! = String(format: "x:%.2f, y:%.2f\nr:%.2f, phi:%.2f\nr:%d, phi:%d", joyXvalue, joyYvalue,joyRvalue, joyPhivalue, sendLength, sendAngle)
+        sendButton = 0 + 1*AState + 2*BState + 4*CState + 8*DState + 16*switchState
+        
+        aliveCounter+=1
+        
+        infoText.text! = String(format: "x:%.2f, y:%.2f\nx:%.2f, y:%.2f\nr:%.2f, phi:%.2f\nr:%d, phi:%d\nbutton:%d\nAC:%d", location.x,location.y,joyXvalue, joyYvalue,joyRvalue, joyPhivalue, sendLength, sendAngle, sendButton, aliveCounter%16)
         
         if serial.isReady {
-            serial.sendBytesToDevice([0xFF,UInt8(sendLength), UInt8(sendAngle)])
+            serial.sendBytesToDevice([0xFF,UInt8(sendLength), UInt8(sendAngle), UInt8(sendButton), UInt8(aliveCounter%16)])
             //serial.sendMessageToDevice(String(format: "%d%d", sendLength, sendAngle))
         }
         
